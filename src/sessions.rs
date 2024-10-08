@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use color_eyre::eyre::{OptionExt, Result};
 use ini::Ini;
+use itertools::Itertools;
 
 static DEFAULT_XDG_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 
 static SESSION_SUBDIRS: [(&str, SessionType); 2] =
     [("xsessions", SessionType::X11), ("wayland-sessions", SessionType::Wayland)];
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SessionType {
     X11,
     Wayland,
@@ -40,6 +41,7 @@ pub fn get_sessions() -> Vec<Session> {
     desktop_files
         .map(|(path, r#type)| read_desktop_file(path, r#type))
         .filter_map(Result::ok)
+        .unique_by(|session| (session.exec.clone(), session.r#type))
         .collect()
 }
 

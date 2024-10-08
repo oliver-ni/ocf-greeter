@@ -41,6 +41,7 @@ pub fn get_sessions() -> Vec<Session> {
     desktop_files
         .map(|(path, r#type)| read_desktop_file(path, r#type))
         .filter_map(Result::ok)
+        .sorted_by(|s1, s2| Ord::cmp(&s1.name, &s2.name).reverse())
         .unique_by(|session| (session.exec.clone(), session.r#type))
         .collect()
 }

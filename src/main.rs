@@ -1,14 +1,16 @@
 mod sessions;
 mod tailwind_colors;
 
+use std::cell::OnceCell;
 use std::sync::Arc;
 
 use iced::theme::{Custom, Palette};
-use iced::widget::{button, center, column, pick_list, svg, text_input, Text};
+use iced::widget::{button, center, column, container, pick_list, svg, text_input, Text};
 use iced::{
     exit, keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription,
     Task, Theme,
 };
+use sessions::Session;
 
 pub fn main() -> iced::Result {
     iced::application(Greeter::title, Greeter::update, Greeter::view)
@@ -21,7 +23,8 @@ pub fn main() -> iced::Result {
 struct Greeter {
     username: String,
     password: String,
-    // session: String,
+    sessions: OnceCell<Vec<Session>>,
+    session: Option<Session>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,7 +33,7 @@ enum Message {
     PasswordChanged(String),
     TabPressed { shift: bool },
     SubmitPressed,
-    SessionSelected(String),
+    SessionSelected(Session),
 }
 
 impl Greeter {
@@ -113,22 +116,25 @@ impl Greeter {
         };
 
         let login_button = button("Login").on_press(Message::SubmitPressed);
-        dbg!(sessions::get_sessions());
+
+        let session_selector = {
+            container(
+                pick_list(
+                    self.sessions.get_or_init(sessions::get_sessions).as_slice(),
+                    self.session.clone(),
+                    Message::SessionSelected,
+                )
+                .placeholder("choose a session"),
+            )
+            .width(Length::Fill)
+            .align_x(Alignment::End)
+        };
 
         center(
-            column![
-                logo,
-                login_form,
-                login_button,
-                pick_list(
-                    ["one".to_owned(), "two".to_owned()],
-                    Some("one".to_owned()),
-                    Message::SessionSelected
-                )
-            ]
-            .align_x(Alignment::Center)
-            .spacing(20)
-            .max_width(300),
+            column![logo, login_form, login_button, session_selector]
+                .align_x(Alignment::Center)
+                .spacing(20)
+                .max_width(300),
         )
         .into()
     }

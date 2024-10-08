@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::path::PathBuf;
 
 use color_eyre::eyre::{OptionExt, Result};
@@ -24,6 +25,12 @@ pub struct Session {
     desktop_names: Option<String>,
 }
 
+impl Display for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.name.fmt(f)
+    }
+}
+
 pub fn get_sessions() -> Vec<Session> {
     let xdg_data_dirs =
         std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| DEFAULT_XDG_DATA_DIRS.to_owned());
@@ -41,8 +48,11 @@ pub fn get_sessions() -> Vec<Session> {
     desktop_files
         .map(|(path, r#type)| read_desktop_file(path, r#type))
         .filter_map(Result::ok)
+        // Dedup the entries by the command and type, keeping the one with the
+        // last name in lexicographic order, to keep the most specific entry.
         .sorted_by(|s1, s2| Ord::cmp(&s1.name, &s2.name).reverse())
         .unique_by(|session| (session.exec.clone(), session.r#type))
+        .rev()
         .collect()
 }
 

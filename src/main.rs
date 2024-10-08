@@ -87,19 +87,19 @@ impl Greeter {
         // Defaults
 
         let text_input = |placeholder, value| {
-            text_input(placeholder, value).padding([6, 12]).style(Self::text_input_style)
+            text_input(placeholder, value).padding([8, 16]).style(Self::text_input_style)
         };
 
         let button = |value| {
             button(Text::new(value).width(Length::Fill).center())
-                .padding([6, 12])
+                .padding([8, 16])
                 .width(Length::Fill)
                 .style(Self::button_style)
         };
 
         // Actual UI
 
-        let logo = svg("logo.svg").width(100);
+        let logo = svg("logo.svg").width(96);
 
         let login_form = {
             column![
@@ -111,7 +111,7 @@ impl Greeter {
                     .on_input(Message::PasswordChanged)
                     .on_submit(Message::SubmitPressed)
             ]
-            .spacing(10)
+            .spacing(12)
             .align_x(Alignment::Center)
         };
 
@@ -133,8 +133,8 @@ impl Greeter {
         center(
             column![logo, login_form, login_button, session_selector]
                 .align_x(Alignment::Center)
-                .spacing(20)
-                .max_width(300),
+                .spacing(24)
+                .max_width(384),
         )
         .into()
     }

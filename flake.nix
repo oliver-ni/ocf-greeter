@@ -13,8 +13,9 @@
     in
     {
       devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
+        default = pkgs.mkShell rec {
           packages = [ pkgs.wayland ];
+          LD_LIBRARY_PATH = "${nixpkgs.lib.makeLibraryPath packages}";
         };
       });
     };

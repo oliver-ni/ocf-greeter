@@ -48,11 +48,6 @@ pub fn get_sessions() -> Vec<Session> {
     desktop_files
         .map(|(path, r#type)| read_desktop_file(path, r#type))
         .filter_map(Result::ok)
-        // Dedup the entries by the command and type, keeping the one with the
-        // last name in lexicographic order, to keep the most specific entry.
-        .sorted_by(|s1, s2| Ord::cmp(&s1.name, &s2.name).reverse())
-        .unique_by(|session| (session.exec.clone(), session.r#type))
-        .rev()
         .collect()
 }
 

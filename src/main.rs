@@ -1,40 +1,151 @@
-use iced::widget::{button, column, text, Column};
-use iced::Center;
+mod sessions;
+mod tailwind_colors;
+
+use std::sync::Arc;
+
+use iced::theme::{Custom, Palette};
+use iced::widget::{button, center, column, pick_list, svg, text_input, Text};
+use iced::{
+    exit, keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription,
+    Task, Theme,
+};
 
 pub fn main() -> iced::Result {
-    iced::run("A cool counter", Counter::update, Counter::view)
+    iced::application(Greeter::title, Greeter::update, Greeter::view)
+        .subscription(Greeter::subscription)
+        .theme(Greeter::theme)
+        .run()
 }
 
 #[derive(Default)]
-struct Counter {
-    value: i64,
+struct Greeter {
+    username: String,
+    password: String,
+    // session: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Message {
-    Increment,
-    Decrement,
+    UsernameChanged(String),
+    PasswordChanged(String),
+    TabPressed { shift: bool },
+    SubmitPressed,
+    SessionSelected(String),
 }
 
-impl Counter {
-    fn update(&mut self, message: Message) {
+impl Greeter {
+    fn title(&self) -> String {
+        "Welcome to the Open Computing Facility!".to_owned()
+    }
+
+    fn theme(&self) -> Theme {
+        let palette = Palette {
+            background: tailwind_colors::GRAY_100,
+            text: Color::BLACK,
+            primary: tailwind_colors::SKY_950,
+            success: tailwind_colors::GREEN_500,
+            danger: tailwind_colors::RED_500,
+        };
+
+        Theme::Custom(Arc::new(Custom::new("OCF".to_owned(), palette)))
+    }
+
+    fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Increment => {
-                self.value += 1;
+            Message::UsernameChanged(username) => {
+                self.username = username;
+                Task::none()
             }
-            Message::Decrement => {
-                self.value -= 1;
+            Message::PasswordChanged(password) => {
+                self.password = password;
+                Task::none()
+            }
+            Message::TabPressed { shift: false } => widget::focus_next(),
+            Message::TabPressed { shift: true } => widget::focus_previous(),
+            Message::SubmitPressed => exit(),
+            Message::SessionSelected(session) => {
+                println!("{}", session);
+                Task::none()
             }
         }
     }
 
-    fn view(&self) -> Column<Message> {
-        column![
-            button("Increment").on_press(Message::Increment),
-            text(self.value).size(50),
-            button("Decrement").on_press(Message::Decrement)
-        ]
-        .padding(20)
-        .align_x(Center)
+    fn subscription(&self) -> Subscription<Message> {
+        use keyboard::key::Named::Tab;
+        use keyboard::Key;
+
+        keyboard::on_key_press(|key, modifiers| match key {
+            Key::Named(Tab) => Some(Message::TabPressed { shift: modifiers.shift() }),
+            _ => None,
+        })
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        // Defaults
+
+        let text_input = |placeholder, value| {
+            text_input(placeholder, value).padding([6, 12]).style(Self::text_input_style)
+        };
+
+        let button = |value| {
+            button(Text::new(value).width(Length::Fill).center())
+                .padding([6, 12])
+                .width(Length::Fill)
+                .style(Self::button_style)
+        };
+
+        // Actual UI
+
+        let logo = svg("logo.svg").width(100);
+
+        let login_form = {
+            column![
+                text_input("Username", &self.username)
+                    .on_input(Message::UsernameChanged)
+                    .on_submit(Message::SubmitPressed),
+                text_input("Password", &self.password)
+                    .secure(true)
+                    .on_input(Message::PasswordChanged)
+                    .on_submit(Message::SubmitPressed)
+            ]
+            .spacing(10)
+            .align_x(Alignment::Center)
+        };
+
+        let login_button = button("Login").on_press(Message::SubmitPressed);
+        dbg!(sessions::get_sessions());
+
+        center(
+            column![
+                logo,
+                login_form,
+                login_button,
+                pick_list(
+                    ["one".to_owned(), "two".to_owned()],
+                    Some("one".to_owned()),
+                    Message::SessionSelected
+                )
+            ]
+            .align_x(Alignment::Center)
+            .spacing(20)
+            .max_width(300),
+        )
+        .into()
+    }
+
+    fn button_style(theme: &Theme, status: button::Status) -> button::Style {
+        button::Style {
+            border: Border { radius: 3.into(), ..Default::default() },
+            ..button::primary(theme, status)
+        }
+    }
+
+    fn text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+        text_input::Style {
+            background: Background::Color(tailwind_colors::GRAY_300),
+            border: Border { radius: 3.into(), ..Default::default() },
+            placeholder: tailwind_colors::GRAY_400,
+            ..text_input::default(theme, status)
+        }
     }
 }

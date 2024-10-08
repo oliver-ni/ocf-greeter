@@ -48,6 +48,7 @@ pub fn get_sessions() -> Vec<Session> {
     desktop_files
         .map(|(path, r#type)| read_desktop_file(path, r#type))
         .filter_map(Result::ok)
+        .unique_by(|session| session.slug.clone())
         .collect()
 }
 

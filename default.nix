@@ -1,4 +1,4 @@
-{ lib, fetchFromGitHub, rustPlatform }:
+{ lib, fetchFromGitHub, rustPlatform, autoPatchelfHook, gcc-unwrapped, wayland, libGL, libxkbcommon }:
 
 rustPlatform.buildRustPackage rec {
   pname = "ocf-greeter";
@@ -6,7 +6,13 @@ rustPlatform.buildRustPackage rec {
 
   src = ./.;
 
-  cargoHash = lib.fakeHash;
+  cargoHash = "sha256-RqDsd4FfDtUXZKrNxZmqzZ5XyX2UziZEKoN4VbIy8V0=";
+
+  RUSTC_BOOTSTRAP = 1;
+
+  nativeBuildInputs = [ autoPatchelfHook ];
+  buildInputs = [ gcc-unwrapped ];
+  runtimeDependencies = map lib.getLib [ gcc-unwrapped wayland libGL libxkbcommon ];
 
   meta = with lib; {
     description = "Custom greetd greeter for the Open Computing Facility";

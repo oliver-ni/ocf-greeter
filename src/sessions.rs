@@ -18,11 +18,11 @@ pub enum SessionType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
-    slug: String,
-    name: String,
-    exec: String,
-    r#type: SessionType,
-    desktop_names: Option<String>,
+    pub slug: String,
+    pub name: String,
+    pub exec: Vec<String>,
+    pub r#type: SessionType,
+    pub desktop_names: Option<String>,
 }
 
 impl Display for Session {
@@ -66,7 +66,7 @@ pub fn read_desktop_file(path: PathBuf, r#type: SessionType) -> Result<Session> 
     Ok(Session {
         slug: path.file_stem().unwrap().to_string_lossy().to_string(),
         name: name.to_owned(),
-        exec: exec.to_owned(),
+        exec: shlex::split(exec).ok_or_eyre("failed to parse Exec= in .desktop file")?,
         r#type: r#type.to_owned(),
         desktop_names: desktop_names.map(str::to_owned),
     })

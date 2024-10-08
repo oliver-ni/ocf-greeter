@@ -1,14 +1,20 @@
+#![feature(once_cell_try)]
+#![feature(once_cell_get_mut)]
+
+mod greetd;
 mod sessions;
 mod tailwind_colors;
 
 use std::cell::OnceCell;
 use std::sync::Arc;
 
+use color_eyre::eyre::{bail, Result};
+use greetd::Client;
 use iced::theme::{Custom, Palette};
-use iced::widget::{button, center, column, container, pick_list, svg, text_input, Text};
+use iced::widget::{button, center, column, container, pick_list, svg, text, text_input, Text};
 use iced::{
-    exit, keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription,
-    Task, Theme,
+    keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription, Task,
+    Theme,
 };
 use sessions::Session;
 
@@ -25,6 +31,8 @@ struct Greeter {
     password: String,
     sessions: OnceCell<Vec<Session>>,
     session: Option<Session>,
+    client: OnceCell<greetd::Client>,
+    error_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,12 +73,31 @@ impl Greeter {
             }
             Message::TabPressed { shift: false } => widget::focus_next(),
             Message::TabPressed { shift: true } => widget::focus_previous(),
-            Message::SubmitPressed => exit(),
             Message::SessionSelected(session) => {
                 self.session = Some(session);
                 Task::none()
             }
+            Message::SubmitPressed => {
+                match self.handle_login() {
+                    Ok(_) => {}
+                    Err(error) => self.error_message = Some(error.to_string()),
+                }
+                Task::none()
+            }
         }
+    }
+
+    fn handle_login(&mut self) -> Result<()> {
+        let Some(session) = self.session.as_ref() else {
+            bail!("No session selected");
+        };
+
+        let client = self.client.get_mut_or_try_init(Client::new)?;
+        client.create_session(self.username.clone())?;
+        client.post_auth_message_response(Some(self.password.clone()))?;
+        client.start_session(session.exec.clone(), Vec::new())?;
+
+        Ok(())
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -130,8 +157,11 @@ impl Greeter {
             .align_x(Alignment::End)
         };
 
+        let error_message = text!("{}", self.error_message.as_deref().unwrap_or(""))
+            .color(tailwind_colors::RED_500);
+
         center(
-            column![logo, login_form, login_button, session_selector]
+            column![logo, login_form, login_button, session_selector, error_message]
                 .align_x(Alignment::Center)
                 .spacing(24)
                 .max_width(384),

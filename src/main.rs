@@ -67,7 +67,7 @@ impl Greeter {
             Message::TabPressed { shift: true } => widget::focus_previous(),
             Message::SubmitPressed => exit(),
             Message::SessionSelected(session) => {
-                println!("{}", session);
+                self.session = Some(session);
                 Task::none()
             }
         }

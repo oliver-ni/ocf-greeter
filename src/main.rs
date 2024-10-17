@@ -10,10 +10,15 @@ use std::sync::Arc;
 use enum_dispatch::enum_dispatch;
 use greetd::impl_mock::MockClient;
 use greetd::r#impl::GreetdClient;
-use greetd::{AnyClient, AnyEmptyClient, AnyNeedAuthResponseClient, EmptyClient};
+use greetd::state::NeedAuthResponse;
+use greetd::{
+    AnyClient, AnyEmptyClient, AnyNeedAuthResponseClient, EmptyClient, NeedAuthResponseClient,
+    SessionCreatedClient,
+};
+use greetd_ipc::AuthMessageType;
 use iced::theme::{Custom, Palette};
 use iced::widget::{
-    button, center, column, container, pick_list, svg, text, text_input, Column, Text,
+    button, center, column, container, pick_list, svg, text_input, Column, Text, TextInput,
 };
 use iced::{
     keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription, Task,
@@ -22,14 +27,10 @@ use iced::{
 use sessions::Session;
 
 pub fn main() -> iced::Result {
-    iced::application(
-        GreeterWrapper::title,
-        GreeterWrapper::update,
-        GreeterWrapper::view,
-    )
-    .subscription(GreeterWrapper::subscription)
-    .theme(GreeterWrapper::theme)
-    .run()
+    iced::application(GreeterWrapper::title, GreeterWrapper::update, GreeterWrapper::view)
+        .subscription(GreeterWrapper::subscription)
+        .theme(GreeterWrapper::theme)
+        .run()
 }
 
 #[derive(Default)]
@@ -57,9 +58,7 @@ impl GreeterWrapper {
         use keyboard::Key;
 
         keyboard::on_key_press(|key, modifiers| match key {
-            Key::Named(Tab) => Some(Message::TabPressed {
-                shift: modifiers.shift(),
-            }),
+            Key::Named(Tab) => Some(Message::TabPressed { shift: modifiers.shift() }),
             _ => None,
         })
     }
@@ -86,6 +85,7 @@ impl GreeterWrapper {
 enum Message {
     UsernameChanged(String),
     PasswordChanged(String),
+    ValueChanged(String),
     TabPressed { shift: bool },
     SubmitPressed,
     SessionSelected(Session),
@@ -130,6 +130,7 @@ impl FormState {
                 self.session = Some(session);
                 Task::none()
             }
+            Message::ValueChanged(_) => Task::none(),
             Message::SubmitPressed => Task::none(),
         }
     }
@@ -138,17 +139,16 @@ impl FormState {
         svg("logo.svg").width(96).into()
     }
 
+    fn text_input<'a>(&self, placeholder: &'a str, value: &'a str) -> TextInput<'a, Message> {
+        text_input(placeholder, value).padding([8, 16]).style(text_input_style)
+    }
+
     fn login_form(&self) -> Element<'_, Message> {
-        let text_input = |placeholder, value| {
-            text_input(placeholder, value)
-                .padding([8, 16])
-                .style(text_input_style)
-        };
         column![
-            text_input("Username", &self.username)
+            self.text_input("Username", &self.username)
                 .on_input(Message::UsernameChanged)
                 .on_submit(Message::SubmitPressed),
-            text_input("Password", &self.password)
+            self.text_input("Password", &self.password)
                 .secure(true)
                 .on_input(Message::PasswordChanged)
                 .on_submit(Message::SubmitPressed)
@@ -181,24 +181,13 @@ impl FormState {
         .align_x(Alignment::End)
         .into()
     }
-
-    fn view(&self) -> Vec<Element<'_, Message>> {
-        vec![
-            self.logo(),
-            self.login_form(),
-            self.submit_button(),
-            self.session_selector(),
-        ]
-    }
 }
 
 #[enum_dispatch]
 trait GreeterTrait {
     fn state(&self) -> &FormState;
     fn state_mut(&mut self) -> &mut FormState;
-    fn view(&self) -> Vec<Element<'_, Message>> {
-        FormState::view(self.state())
-    }
+    fn view(&self) -> Vec<Element<'_, Message>>;
     fn update(self, message: Message) -> (Task<Message>, AnyGreeter);
 }
 
@@ -213,10 +202,30 @@ impl Default for EmptyGreeter {
             Err(std::env::VarError::NotPresent) => GreetdClient::new().unwrap().into(),
             _ => MockClient::new().unwrap().into(),
         };
-        Self {
-            state: Default::default(),
-            client,
+        Self { state: Default::default(), client }
+    }
+}
+
+fn process_create_session_response(state: FormState, response: AnyClient) -> AnyGreeter {
+    match response {
+        AnyClient::EmptyClient(client) => EmptyGreeter { state, client }.into(),
+        AnyClient::NeedAuthResponseClient(client) => match client.state() {
+            NeedAuthResponse { auth_message_type: AuthMessageType::Secret, auth_message }
+                if auth_message.to_lowercase().contains("password") =>
+            {
+                let response =
+                    client.post_auth_message_response(Some(state.password.clone())).unwrap();
+                process_create_session_response(state, response)
+            }
+            _ => NeedAuthResponseGreeter { state, value: Default::default(), client }.into(),
+        },
+        AnyClient::SessionCreatedClient(client) => {
+            let response = client
+                .start_session(state.session.as_ref().unwrap().exec.clone(), Vec::new())
+                .unwrap();
+            process_create_session_response(state, response)
         }
+        AnyClient::SessionStartedClient(_) => EmptyGreeter::default().into(),
     }
 }
 
@@ -231,33 +240,27 @@ impl GreeterTrait for EmptyGreeter {
 
     fn update(mut self, message: Message) -> (Task<Message>, AnyGreeter) {
         match &message {
-            Message::SubmitPressed => (
-                Task::none(),
-                match self
-                    .client
-                    .create_session(self.state.username.clone())
-                    .unwrap()
-                {
-                    AnyClient::EmptyClient(client) => EmptyGreeter {
-                        state: self.state,
-                        client,
-                    }
-                    .into(),
-                    AnyClient::NeedAuthResponseClient(client) => NeedAuthResponseGreeter {
-                        state: self.state,
-                        client,
-                    }
-                    .into(),
-                    _ => panic!("oops"),
-                },
-            ),
+            Message::SubmitPressed => {
+                let response = self.client.create_session(self.state.username.clone()).unwrap();
+                (Task::none(), process_create_session_response(self.state, response))
+            }
             _ => (FormState::update(self.state_mut(), message), self.into()),
         }
+    }
+
+    fn view(&self) -> Vec<Element<'_, Message>> {
+        vec![
+            self.state.logo(),
+            self.state.login_form(),
+            self.state.submit_button(),
+            self.state.session_selector(),
+        ]
     }
 }
 
 struct NeedAuthResponseGreeter {
     state: FormState,
+    value: String,
     client: AnyNeedAuthResponseClient,
 }
 
@@ -271,24 +274,36 @@ impl GreeterTrait for NeedAuthResponseGreeter {
     }
 
     fn update(mut self, message: Message) -> (Task<Message>, AnyGreeter) {
-        let task = match &message {
-            Message::SubmitPressed => Task::none(),
-            _ => FormState::update(self.state_mut(), message),
-        };
-        (task, self.into())
+        match message {
+            Message::ValueChanged(value) => {
+                self.value = value;
+                (Task::none(), self.into())
+            }
+            Message::SubmitPressed => {
+                let response = self.client.post_auth_message_response(Some(self.value)).unwrap();
+                (Task::none(), process_create_session_response(self.state, response))
+            }
+            _ => (FormState::update(self.state_mut(), message), self.into()),
+        }
     }
 
     fn view(&self) -> Vec<Element<'_, Message>> {
-        vec![text!("Initiated login").into()]
+        vec![
+            self.state.logo(),
+            self.state
+                .text_input(&self.client.state().auth_message, &self.value)
+                .secure(matches!(self.client.state().auth_message_type, AuthMessageType::Secret))
+                .on_input(Message::ValueChanged)
+                .on_submit(Message::SubmitPressed)
+                .into(),
+            self.state.submit_button(),
+        ]
     }
 }
 
 fn button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        border: Border {
-            radius: 3.into(),
-            ..Default::default()
-        },
+        border: Border { radius: 3.into(), ..Default::default() },
         ..button::primary(theme, status)
     }
 }
@@ -296,10 +311,7 @@ fn button_style(theme: &Theme, status: button::Status) -> button::Style {
 fn text_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     text_input::Style {
         background: Background::Color(tailwind_colors::GRAY_300),
-        border: Border {
-            radius: 3.into(),
-            ..Default::default()
-        },
+        border: Border { radius: 3.into(), ..Default::default() },
         placeholder: tailwind_colors::GRAY_400,
         ..text_input::default(theme, status)
     }

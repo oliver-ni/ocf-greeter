@@ -7,13 +7,24 @@ use itertools::Itertools;
 
 static DEFAULT_XDG_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 
-static SESSION_SUBDIRS: [(&str, SessionType); 2] =
-    [("xsessions", SessionType::X11), ("wayland-sessions", SessionType::Wayland)];
+static SESSION_SUBDIRS: [(&str, SessionType); 2] = [
+    ("xsessions", SessionType::X11),
+    ("wayland-sessions", SessionType::Wayland),
+];
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SessionType {
     X11,
     Wayland,
+}
+
+impl Display for SessionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::X11 => write!(f, "x11"),
+            Self::Wayland => write!(f, "wayland"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,12 +33,22 @@ pub struct Session {
     pub name: String,
     pub exec: Vec<String>,
     pub r#type: SessionType,
-    pub desktop_names: Option<String>,
+    pub desktop_names: Vec<String>,
 }
 
 impl Display for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.name.fmt(f)
+    }
+}
+
+impl Session {
+    pub fn to_environment(&self) -> Vec<String> {
+        vec![
+            format!("XDG_SESSION_TYPE={}", self.r#type),
+            format!("XDG_SESSION_DESKTOP={}", self.slug),
+            format!("XDG_CURRENT_DESKTOP={}", self.desktop_names.join(":")),
+        ]
     }
 }
 
@@ -41,7 +62,10 @@ pub fn get_sessions() -> Vec<Session> {
     });
 
     let desktop_files = session_dirs.flat_map(|(dir, r#type)| match std::fs::read_dir(dir) {
-        Ok(entries) => entries.filter_map(Result::ok).map(|entry| (entry.path(), r#type)).collect(),
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| (entry.path(), r#type))
+            .collect(),
         Err(_) => Vec::new(),
     });
 
@@ -59,15 +83,19 @@ pub fn read_desktop_file(path: PathBuf, r#type: SessionType) -> Result<Session> 
         .section(Some("Desktop Entry"))
         .ok_or_eyre("missing [Desktop Entry] section in .desktop file")?;
 
-    let name = section.get("Name").ok_or_eyre("missing Name= property in .desktop file")?;
-    let exec = section.get("Exec").ok_or_eyre("missing Exec= property in .desktop file")?;
-    let desktop_names = section.get("DesktopNames");
+    let name = section
+        .get("Name")
+        .ok_or_eyre("missing Name= property in .desktop file")?;
+    let exec = section
+        .get("Exec")
+        .ok_or_eyre("missing Exec= property in .desktop file")?;
+    let desktop_names = section.get("DesktopNames").unwrap_or("");
 
     Ok(Session {
         slug: path.file_stem().unwrap().to_string_lossy().to_string(),
         name: name.to_owned(),
         exec: shlex::split(exec).ok_or_eyre("failed to parse Exec= in .desktop file")?,
         r#type: r#type.to_owned(),
-        desktop_names: desktop_names.map(str::to_owned),
+        desktop_names: desktop_names.split(";").map(str::to_owned).collect(),
     })
 }

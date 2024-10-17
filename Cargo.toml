@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 color-eyre = "0.6.3"
+enum_dispatch = "0.3.13"
 greetd_ipc = { version = "0.10.3", features = ["sync-codec"] }
 iced = { version = "0.13.1", features = ["svg"] }
 itertools = "0.13.0"

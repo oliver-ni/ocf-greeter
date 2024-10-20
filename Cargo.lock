@@ -2347,6 +2347,7 @@ dependencies = [
  "itertools",
  "rust-ini 0.21.1",
  "shlex",
+ "thiserror",
 ]
 
 [[package]]

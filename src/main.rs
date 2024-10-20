@@ -7,12 +7,10 @@ mod tailwind_colors;
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use greetd::impl_mock::MockClient;
-use greetd::r#impl::GreetdClient;
+use greetd::client::Client;
 use greetd::state::AuthMessageType;
-use greetd::{
-    AnyClient, AnyEmptyClient, EmptyClient, NeedAuthResponseClient, SessionCreatedClient,
-};
+use greetd::transport::{GreetdTransport, MockTransport, Transport};
+use greetd::AnyClient;
 use iced::theme::{Custom, Palette};
 use iced::widget::{
     button, center, column, container, pick_list, svg, text_input, Column, Text, TextInput,
@@ -23,12 +21,24 @@ use iced::{
 };
 use sessions::Session;
 
-struct Greeter {
+struct Greeter<T: Transport> {
     answered_questions: Vec<String>,
     value: String,
     sessions: OnceCell<Vec<Session>>,
     session: Option<Session>,
-    client: Option<AnyClient>,
+    client: Option<AnyClient<T>>,
+}
+
+impl<T: Transport> Default for Greeter<T> {
+    fn default() -> Self {
+        Self {
+            answered_questions: Default::default(),
+            value: Default::default(),
+            sessions: Default::default(),
+            session: Default::default(),
+            client: Some(Client::new().unwrap().into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -40,13 +50,20 @@ enum Message {
 }
 
 pub fn main() -> iced::Result {
-    iced::application(Greeter::title, Greeter::update, Greeter::view)
+    match std::env::var("OCF_GREETER_MOCK").ok() {
+        Some(_) => run::<MockTransport>(),
+        None => run::<GreetdTransport>(),
+    }
+}
+
+pub fn run<T: Transport + 'static>() -> iced::Result {
+    iced::application(Greeter::<T>::title, Greeter::update, Greeter::view)
         .subscription(Greeter::subscription)
         .theme(Greeter::theme)
         .run()
 }
 
-impl Greeter {
+impl<T: Transport> Greeter<T> {
     fn title(&self) -> String {
         "Welcome to the Open Computing Facility!".to_owned()
     }
@@ -91,11 +108,11 @@ impl Greeter {
 
     fn submit(&mut self) -> Task<Message> {
         let client = match std::mem::take(&mut self.client).unwrap() {
-            AnyClient::EmptyClient(client) => client.create_session(self.value.clone()).unwrap(),
-            AnyClient::NeedAuthResponseClient(client) => {
+            AnyClient::Empty(client) => client.create_session(self.value.clone()).unwrap(),
+            AnyClient::NeedAuthResponse(client) => {
                 client.post_auth_message_response(Some(self.value.clone())).unwrap()
             }
-            AnyClient::SessionCreatedClient(client) => {
+            AnyClient::SessionCreated(client) => {
                 client
                     .start_session(
                         self.session.as_ref().unwrap().exec.clone(),
@@ -104,7 +121,7 @@ impl Greeter {
                     .unwrap();
                 return Task::none();
             }
-            client @ AnyClient::SessionStartedClient(_) => client,
+            client @ AnyClient::SessionStarted(_) => client,
         };
         self.client = Some(client);
 
@@ -122,12 +139,12 @@ impl Greeter {
 
     fn login_form(&self) -> Element<'_, Message> {
         let (auth_message, auth_message_type) = match self.client.as_ref().unwrap() {
-            AnyClient::EmptyClient(_) => ("Username", AuthMessageType::Visible),
-            AnyClient::NeedAuthResponseClient(client) => {
-                (client.state().auth_message.as_str(), client.state().auth_message_type)
+            AnyClient::Empty(_) => ("Username", AuthMessageType::Visible),
+            AnyClient::NeedAuthResponse(client) => {
+                (client.state.auth_message.as_str(), client.state.auth_message_type)
             }
-            AnyClient::SessionCreatedClient(_) => return column![].into(),
-            AnyClient::SessionStartedClient(_) => return column![].into(),
+            AnyClient::SessionCreated(_) => return column![].into(),
+            AnyClient::SessionStarted(_) => return column![].into(),
         };
 
         let answered_question_inputs =
@@ -178,23 +195,6 @@ impl Greeter {
                 .max_width(384),
         )
         .into()
-    }
-}
-
-impl Default for Greeter {
-    fn default() -> Self {
-        let client: AnyEmptyClient = match std::env::var("OCF_GREETER_MOCK") {
-            Err(std::env::VarError::NotPresent) => GreetdClient::new().unwrap().into(),
-            _ => MockClient::new().unwrap().into(),
-        };
-
-        Self {
-            answered_questions: Default::default(),
-            value: Default::default(),
-            sessions: Default::default(),
-            session: Default::default(),
-            client: Some(AnyClient::empty(client)),
-        }
     }
 }
 

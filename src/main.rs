@@ -7,15 +7,12 @@ mod tailwind_colors;
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use enum_dispatch::enum_dispatch;
 use greetd::impl_mock::MockClient;
 use greetd::r#impl::GreetdClient;
-use greetd::state::NeedAuthResponse;
+use greetd::state::AuthMessageType;
 use greetd::{
-    AnyClient, AnyEmptyClient, AnyNeedAuthResponseClient, EmptyClient, NeedAuthResponseClient,
-    SessionCreatedClient,
+    AnyClient, AnyEmptyClient, EmptyClient, NeedAuthResponseClient, SessionCreatedClient,
 };
-use greetd_ipc::AuthMessageType;
 use iced::theme::{Custom, Palette};
 use iced::widget::{
     button, center, column, container, pick_list, svg, text_input, Column, Text, TextInput,
@@ -26,17 +23,30 @@ use iced::{
 };
 use sessions::Session;
 
+struct Greeter {
+    answered_questions: Vec<String>,
+    value: String,
+    sessions: OnceCell<Vec<Session>>,
+    session: Option<Session>,
+    client: Option<AnyClient>,
+}
+
+#[derive(Debug, Clone)]
+enum Message {
+    ValueChanged(String),
+    TabPressed { shift: bool },
+    SubmitPressed,
+    SessionSelected(Session),
+}
+
 pub fn main() -> iced::Result {
-    iced::application(GreeterWrapper::title, GreeterWrapper::update, GreeterWrapper::view)
-        .subscription(GreeterWrapper::subscription)
-        .theme(GreeterWrapper::theme)
+    iced::application(Greeter::title, Greeter::update, Greeter::view)
+        .subscription(Greeter::subscription)
+        .theme(Greeter::theme)
         .run()
 }
 
-#[derive(Default)]
-struct GreeterWrapper(AnyGreeter);
-
-impl GreeterWrapper {
+impl Greeter {
     fn title(&self) -> String {
         "Welcome to the Open Computing Facility!".to_owned()
     }
@@ -63,65 +73,10 @@ impl GreeterWrapper {
         })
     }
 
-    fn view(&self) -> Element<'_, Message> {
-        center(
-            Column::with_children(self.0.view())
-                .align_x(Alignment::Center)
-                .spacing(24)
-                .max_width(384),
-        )
-        .into()
-    }
-
-    fn update(&mut self, message: Message) -> Task<Message> {
-        let old = std::mem::take(&mut self.0);
-        let (task, new) = old.update(message);
-        self.0 = new;
-        task
-    }
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    UsernameChanged(String),
-    PasswordChanged(String),
-    ValueChanged(String),
-    TabPressed { shift: bool },
-    SubmitPressed,
-    SessionSelected(Session),
-}
-
-#[enum_dispatch(GreeterTrait)]
-enum AnyGreeter {
-    EmptyGreeter(EmptyGreeter),
-    NeedAuthResponseGreeter(NeedAuthResponseGreeter),
-    // SessionCreatedGreeter(SessionCreatedGreeter),
-    // SessionStartedGreeter(SessionStartedGreeter),
-}
-
-impl Default for AnyGreeter {
-    fn default() -> Self {
-        Self::EmptyGreeter(Default::default())
-    }
-}
-
-#[derive(Default)]
-struct FormState {
-    username: String,
-    password: String,
-    sessions: OnceCell<Vec<Session>>,
-    session: Option<Session>,
-}
-
-impl FormState {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::UsernameChanged(username) => {
-                self.username = username;
-                Task::none()
-            }
-            Message::PasswordChanged(password) => {
-                self.password = password;
+            Message::ValueChanged(value) => {
+                self.value = value;
                 Task::none()
             }
             Message::TabPressed { shift: false } => widget::focus_next(),
@@ -130,9 +85,31 @@ impl FormState {
                 self.session = Some(session);
                 Task::none()
             }
-            Message::ValueChanged(_) => Task::none(),
-            Message::SubmitPressed => Task::none(),
+            Message::SubmitPressed => self.submit(),
         }
+    }
+
+    fn submit(&mut self) -> Task<Message> {
+        let client = match std::mem::take(&mut self.client).unwrap() {
+            AnyClient::EmptyClient(client) => client.create_session(self.value.clone()).unwrap(),
+            AnyClient::NeedAuthResponseClient(client) => {
+                client.post_auth_message_response(Some(self.value.clone())).unwrap()
+            }
+            AnyClient::SessionCreatedClient(client) => {
+                client
+                    .start_session(
+                        self.session.as_ref().unwrap().exec.clone(),
+                        self.session.as_ref().unwrap().to_environment(),
+                    )
+                    .unwrap();
+                return Task::none();
+            }
+            client @ AnyClient::SessionStartedClient(_) => client,
+        };
+        self.client = Some(client);
+
+        self.answered_questions.push(std::mem::take(&mut self.value));
+        text_input::focus("value")
     }
 
     fn logo(&self) -> Element<'_, Message> {
@@ -144,18 +121,29 @@ impl FormState {
     }
 
     fn login_form(&self) -> Element<'_, Message> {
-        column![
-            self.text_input("Username", &self.username)
-                .on_input(Message::UsernameChanged)
-                .on_submit(Message::SubmitPressed),
-            self.text_input("Password", &self.password)
-                .secure(true)
-                .on_input(Message::PasswordChanged)
-                .on_submit(Message::SubmitPressed)
-        ]
-        .spacing(12)
-        .align_x(Alignment::Center)
-        .into()
+        let (auth_message, auth_message_type) = match self.client.as_ref().unwrap() {
+            AnyClient::EmptyClient(_) => ("Username", AuthMessageType::Visible),
+            AnyClient::NeedAuthResponseClient(client) => {
+                (client.state().auth_message.as_str(), client.state().auth_message_type)
+            }
+            AnyClient::SessionCreatedClient(_) => return column![].into(),
+            AnyClient::SessionStartedClient(_) => return column![].into(),
+        };
+
+        let answered_question_inputs =
+            self.answered_questions.iter().map(|value| self.text_input("", value).into());
+
+        Column::from_iter(answered_question_inputs)
+            .push(
+                self.text_input(auth_message, &self.value)
+                    .id("value")
+                    .on_input(Message::ValueChanged)
+                    .on_submit(Message::SubmitPressed)
+                    .secure(matches!(auth_message_type, AuthMessageType::Secret)),
+            )
+            .spacing(12)
+            .align_x(Alignment::Center)
+            .into()
     }
 
     fn submit_button(&self) -> Element<'_, Message> {
@@ -181,125 +169,129 @@ impl FormState {
         .align_x(Alignment::End)
         .into()
     }
+
+    fn view(&self) -> Element<'_, Message> {
+        center(
+            column![self.logo(), self.login_form(), self.submit_button(), self.session_selector()]
+                .align_x(Alignment::Center)
+                .spacing(24)
+                .max_width(384),
+        )
+        .into()
+    }
 }
 
-#[enum_dispatch]
-trait GreeterTrait {
-    fn state(&self) -> &FormState;
-    fn state_mut(&mut self) -> &mut FormState;
-    fn view(&self) -> Vec<Element<'_, Message>>;
-    fn update(self, message: Message) -> (Task<Message>, AnyGreeter);
-}
-
-struct EmptyGreeter {
-    state: FormState,
-    client: AnyEmptyClient,
-}
-
-impl Default for EmptyGreeter {
+impl Default for Greeter {
     fn default() -> Self {
         let client: AnyEmptyClient = match std::env::var("OCF_GREETER_MOCK") {
             Err(std::env::VarError::NotPresent) => GreetdClient::new().unwrap().into(),
             _ => MockClient::new().unwrap().into(),
         };
-        Self { state: Default::default(), client }
-    }
-}
 
-fn process_create_session_response(state: FormState, response: AnyClient) -> AnyGreeter {
-    match response {
-        AnyClient::EmptyClient(client) => EmptyGreeter { state, client }.into(),
-        AnyClient::NeedAuthResponseClient(client) => match client.state() {
-            NeedAuthResponse { auth_message_type: AuthMessageType::Secret, auth_message }
-                if auth_message.to_lowercase().contains("password") =>
-            {
-                let response =
-                    client.post_auth_message_response(Some(state.password.clone())).unwrap();
-                process_create_session_response(state, response)
-            }
-            _ => NeedAuthResponseGreeter { state, value: Default::default(), client }.into(),
-        },
-        AnyClient::SessionCreatedClient(client) => {
-            let response = client
-                .start_session(state.session.as_ref().unwrap().exec.clone(), Vec::new())
-                .unwrap();
-            process_create_session_response(state, response)
-        }
-        AnyClient::SessionStartedClient(_) => EmptyGreeter::default().into(),
-    }
-}
-
-impl GreeterTrait for EmptyGreeter {
-    fn state(&self) -> &FormState {
-        &self.state
-    }
-
-    fn state_mut(&mut self) -> &mut FormState {
-        &mut self.state
-    }
-
-    fn update(mut self, message: Message) -> (Task<Message>, AnyGreeter) {
-        match &message {
-            Message::SubmitPressed => {
-                let response = self.client.create_session(self.state.username.clone()).unwrap();
-                (Task::none(), process_create_session_response(self.state, response))
-            }
-            _ => (FormState::update(self.state_mut(), message), self.into()),
+        Self {
+            answered_questions: Default::default(),
+            value: Default::default(),
+            sessions: Default::default(),
+            session: Default::default(),
+            client: Some(AnyClient::empty(client)),
         }
     }
-
-    fn view(&self) -> Vec<Element<'_, Message>> {
-        vec![
-            self.state.logo(),
-            self.state.login_form(),
-            self.state.submit_button(),
-            self.state.session_selector(),
-        ]
-    }
 }
 
-struct NeedAuthResponseGreeter {
-    state: FormState,
-    value: String,
-    client: AnyNeedAuthResponseClient,
-}
+// fn process_create_session_response(state: FormState, response: AnyClient) -> AnyGreeter {
+//     match response {
+//         AnyClient::EmptyClient(client) => EmptyGreeter { state, client }.into(),
+//         AnyClient::NeedAuthResponseClient(client) => match client.state() {
+//             NeedAuthResponse { auth_message_type: AuthMessageType::Secret, auth_message }
+//                 if auth_message.to_lowercase().contains("password") =>
+//             {
+//                 let response =
+//                     client.post_auth_message_response(Some(state.password.clone())).unwrap();
+//                 process_create_session_response(state, response)
+//             }
+//             _ => NeedAuthResponseGreeter { state, value: Default::default(), client }.into(),
+//         },
+//         AnyClient::SessionCreatedClient(client) => {
+//             let response = client
+//                 .start_session(state.session.as_ref().unwrap().exec.clone(), Vec::new())
+//                 .unwrap();
+//             process_create_session_response(state, response)
+//         }
+//         AnyClient::SessionStartedClient(_) => EmptyGreeter::default().into(),
+//     }
+// }
 
-impl GreeterTrait for NeedAuthResponseGreeter {
-    fn state(&self) -> &FormState {
-        &self.state
-    }
+// impl GreeterTrait for EmptyGreeter {
+//     fn state(&self) -> &FormState {
+//         &self.state
+//     }
 
-    fn state_mut(&mut self) -> &mut FormState {
-        &mut self.state
-    }
+//     fn state_mut(&mut self) -> &mut FormState {
+//         &mut self.state
+//     }
 
-    fn update(mut self, message: Message) -> (Task<Message>, AnyGreeter) {
-        match message {
-            Message::ValueChanged(value) => {
-                self.value = value;
-                (Task::none(), self.into())
-            }
-            Message::SubmitPressed => {
-                let response = self.client.post_auth_message_response(Some(self.value)).unwrap();
-                (Task::none(), process_create_session_response(self.state, response))
-            }
-            _ => (FormState::update(self.state_mut(), message), self.into()),
-        }
-    }
+//     fn update(mut self, message: Message) -> (Task<Message>, AnyGreeter) {
+//         match &message {
+//             Message::SubmitPressed => {
+//                 let response = self.client.create_session(self.state.username.clone()).unwrap();
+//                 (Task::none(), process_create_session_response(self.state, response))
+//             }
+//             _ => (FormState::update(self.state_mut(), message), self.into()),
+//         }
+//     }
 
-    fn view(&self) -> Vec<Element<'_, Message>> {
-        vec![
-            self.state.logo(),
-            self.state
-                .text_input(&self.client.state().auth_message, &self.value)
-                .secure(matches!(self.client.state().auth_message_type, AuthMessageType::Secret))
-                .on_input(Message::ValueChanged)
-                .on_submit(Message::SubmitPressed)
-                .into(),
-            self.state.submit_button(),
-        ]
-    }
-}
+//     fn view(&self) -> Vec<Element<'_, Message>> {
+//         vec![
+//             self.state.logo(),
+//             self.state.login_form(),
+//             self.state.submit_button(),
+//             self.state.session_selector(),
+//         ]
+//     }
+// }
+
+// struct NeedAuthResponseGreeter {
+//     state: FormState,
+//     value: String,
+//     client: AnyNeedAuthResponseClient,
+// }
+
+// impl GreeterTrait for NeedAuthResponseGreeter {
+//     fn state(&self) -> &FormState {
+//         &self.state
+//     }
+
+//     fn state_mut(&mut self) -> &mut FormState {
+//         &mut self.state
+//     }
+
+//     fn update(mut self, message: Message) -> (Task<Message>, AnyGreeter) {
+//         match message {
+//             Message::ValueChanged(value) => {
+//                 self.value = value;
+//                 (Task::none(), self.into())
+//             }
+//             Message::SubmitPressed => {
+//                 let response = self.client.post_auth_message_response(Some(self.value)).unwrap();
+//                 (Task::none(), process_create_session_response(self.state, response))
+//             }
+//             _ => (FormState::update(self.state_mut(), message), self.into()),
+//         }
+//     }
+
+//     fn view(&self) -> Vec<Element<'_, Message>> {
+//         vec![
+//             self.state.logo(),
+//             self.state
+//                 .text_input(&self.client.state().auth_message, &self.value)
+//                 .secure(matches!(self.client.state().auth_message_type, AuthMessageType::Secret))
+//                 .on_input(Message::ValueChanged)
+//                 .on_submit(Message::SubmitPressed)
+//                 .into(),
+//             self.state.submit_button(),
+//         ]
+//     }
+// }
 
 fn button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {

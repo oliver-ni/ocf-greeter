@@ -16,28 +16,24 @@ pub struct GreetdClient<State> {
 }
 
 fn send_request(socket: &mut UnixStream, request: Request) -> Result<Response> {
-    request
-        .write_to(socket)
-        .wrap_err("failed to write greetd request")?;
+    request.write_to(socket).wrap_err("failed to write greetd request")?;
     Response::read_from(socket).wrap_err("failed to read greetd response")
 }
 
 fn handle_response(socket: UnixStream, response: Response) -> Result<AnyClient> {
     let client: AnyClient = match response {
-        Response::Success => AnyClient::session_created(GreetdClient {
-            socket,
-            state: SessionCreated,
-        }),
-        Response::AuthMessage {
-            auth_message_type,
-            auth_message,
-        } => AnyClient::need_auth_response(GreetdClient {
-            socket,
-            state: NeedAuthResponse {
-                auth_message_type,
-                auth_message,
-            },
-        }),
+        Response::Success => {
+            AnyClient::session_created(GreetdClient { socket, state: SessionCreated })
+        }
+        Response::AuthMessage { auth_message_type, auth_message } => {
+            AnyClient::need_auth_response(GreetdClient {
+                socket,
+                state: NeedAuthResponse {
+                    auth_message_type: auth_message_type.into(),
+                    auth_message,
+                },
+            })
+        }
         Response::Error { description, .. } => {
             bail!("Error: {}", description)
         }
@@ -50,10 +46,7 @@ impl GreetdClient<Empty> {
     pub fn new() -> Result<Self> {
         let sock = std::env::var("GREETD_SOCK").wrap_err("missing GREETD_SOCK in environment")?;
         let socket = UnixStream::connect(sock).wrap_err("failed to connect to greetd socket")?;
-        Ok(Self {
-            socket,
-            state: Empty,
-        })
+        Ok(Self { socket, state: Empty })
     }
 }
 
@@ -87,10 +80,7 @@ impl SessionCreatedClient for GreetdClient<SessionCreated> {
 
     fn cancel_session(mut self) -> Result<AnyClient> {
         let _ = send_request(&mut self.socket, CancelSession)?;
-        Ok(AnyClient::empty(GreetdClient {
-            socket: self.socket,
-            state: Empty,
-        }))
+        Ok(AnyClient::empty(GreetdClient { socket: self.socket, state: Empty }))
     }
 
     fn state(&self) -> &SessionCreated {

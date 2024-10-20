@@ -1,6 +1,6 @@
 use color_eyre::eyre::{OptionExt, Result};
 
-use super::state::{Empty, NeedAuthResponse, SessionCreated, SessionStarted};
+use super::state::{AuthMessageType, Empty, NeedAuthResponse, SessionCreated, SessionStarted};
 use super::{
     AnyClient, EmptyClient, NeedAuthResponseClient, SessionCreatedClient, SessionStartedClient,
 };
@@ -15,12 +15,10 @@ impl MockClient<Empty> {
 
 impl EmptyClient for MockClient<Empty> {
     fn create_session(self, _username: String) -> Result<AnyClient> {
-        Ok(AnyClient::need_auth_response(MockClient(
-            NeedAuthResponse {
-                auth_message_type: greetd_ipc::AuthMessageType::Secret,
-                auth_message: "Password".to_owned(),
-            },
-        )))
+        Ok(AnyClient::need_auth_response(MockClient(NeedAuthResponse {
+            auth_message_type: AuthMessageType::Secret,
+            auth_message: "Password".to_owned(),
+        })))
     }
 
     fn state(&self) -> &Empty {

@@ -7,7 +7,7 @@ edition = "2021"
 color-eyre = "0.6.3"
 enum_dispatch = "0.3.13"
 greetd_ipc = { version = "0.10.3", features = ["sync-codec"] }
-iced = { version = "0.13.1", features = ["svg"] }
+iced = { version = "0.13.1", features = ["advanced", "svg"] }
 itertools = "0.13.0"
 replace_with = "0.1.7"
 rust-ini = "0.21.1"

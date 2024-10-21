@@ -8,12 +8,12 @@ use std::cell::OnceCell;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use color_eyre::eyre::{bail, OptionExt, Result};
 use greetd::client::Client;
-use greetd::state::AuthMessageType;
 use greetd::transport::{GreetdTransport, MockTransport, Transport};
 use greetd::AnyClient;
+use greetd_ipc::AuthMessageType;
 use iced::theme::{Custom, Palette};
+use iced::widget::svg::Handle;
 use iced::widget::{
     button, center, column, container, pick_list, svg, text, text_input, Column, Text, TextInput,
 };
@@ -22,6 +22,7 @@ use iced::{
     Theme,
 };
 use sessions::Session;
+use thiserror::Error;
 
 enum AnsweredQuestion {
     Visible(String),
@@ -48,6 +49,15 @@ impl<T: Transport> Default for Greeter<T> {
             client: Client::new().unwrap().into(),
         }
     }
+}
+
+#[derive(Debug, Error)]
+enum Error<T: Transport> {
+    #[error("Transport error")]
+    TransportError(T::Error),
+
+    #[error("No session selected")]
+    NoSessionSelected,
 }
 
 #[derive(Debug, Clone)]
@@ -124,37 +134,48 @@ impl<T: Transport + Debug> Greeter<T> {
 
     fn try_replace_client_with_or_abort(
         client: &mut AnyClient<T>,
-        f: impl FnOnce(AnyClient<T>) -> Result<AnyClient<T>>,
-    ) -> Result<()> {
+        f: impl FnOnce(AnyClient<T>) -> Result<AnyClient<T>, Error<T>>,
+    ) -> Result<(), Error<T>> {
         replace_with::replace_with_or_abort_and_return(client, |client| match dbg!(f(client)) {
             Ok(client) => (Ok(()), client),
             Err(error) => (Err(error), Client::new().unwrap().into()),
         })
     }
 
-    fn submit(&mut self) -> Result<Task<Message>> {
+    fn submit(&mut self) -> Result<Task<Message>, Error<T>> {
         Self::try_replace_client_with_or_abort(&mut self.client, |client| match client {
             AnyClient::Empty(client) => {
                 let value = std::mem::take(&mut self.value);
-                self.prev_answers.push(AnsweredQuestion::Visible(value));
-                client.create_session(self.value.clone())
+                self.prev_answers.push(AnsweredQuestion::Visible(value.clone()));
+                client.create_session(value).map_err(Error::TransportError)
             }
 
             AnyClient::NeedAuthResponse(client) => {
-                use AuthMessageType::*;
                 let value = std::mem::take(&mut self.value);
+
                 match client.state.auth_message_type {
-                    Secret => self.prev_answers.push(AnsweredQuestion::Secret(value.clone())),
-                    Visible => self.prev_answers.push(AnsweredQuestion::Visible(value.clone())),
+                    AuthMessageType::Secret => {
+                        self.prev_answers.push(AnsweredQuestion::Secret(value.clone()))
+                    }
+                    AuthMessageType::Visible => {
+                        self.prev_answers.push(AnsweredQuestion::Visible(value.clone()))
+                    }
                     _ => {}
                 };
-                client.post_auth_message_response(Some(value))
+
+                client.post_auth_message_response(Some(value)).map_err(Error::TransportError)
             }
 
             AnyClient::SessionCreated(client) => {
-                let session = self.session.as_ref().ok_or_eyre("No session selected")?;
-                let _ = client.start_session(session.exec.clone(), session.to_environment())?;
-                bail!("Session started")
+                let session = self.session.as_ref().ok_or(Error::NoSessionSelected)?;
+                let _ = client
+                    .start_session(session.exec.clone(), session.to_environment())
+                    .map_err(Error::TransportError)?;
+                todo!()
+            }
+
+            AnyClient::ErrorEncountered(client) => {
+                client.cancel_session().map_err(Error::TransportError)
             }
 
             client @ AnyClient::SessionStarted(_) => Ok(client),
@@ -164,7 +185,7 @@ impl<T: Transport + Debug> Greeter<T> {
     }
 
     fn logo(&self) -> Element<'_, Message> {
-        svg("logo.svg").width(96).into()
+        svg(Handle::from_memory(include_bytes!("logo.svg"))).width(96).into()
     }
 
     fn text_input<'a>(&self, placeholder: &'a str, value: &'a str) -> TextInput<'a, Message> {
@@ -173,12 +194,13 @@ impl<T: Transport + Debug> Greeter<T> {
 
     fn login_form(&self) -> Element<'_, Message> {
         let (auth_message, auth_message_type) = match &self.client {
-            AnyClient::Empty(_) => ("Username", AuthMessageType::Visible),
+            AnyClient::Empty(_) => ("Username", &AuthMessageType::Visible),
             AnyClient::NeedAuthResponse(client) => {
-                (client.state.auth_message.as_str(), client.state.auth_message_type)
+                (client.state.auth_message.as_str(), &client.state.auth_message_type)
             }
             AnyClient::SessionCreated(_) => return column![].into(),
             AnyClient::SessionStarted(_) => return column![].into(),
+            AnyClient::ErrorEncountered(_) => return column![].into(),
         };
 
         let answered_question_inputs = self.prev_answers.iter().map(|value| match value {
@@ -212,6 +234,7 @@ impl<T: Transport + Debug> Greeter<T> {
             AnyClient::NeedAuthResponse(_) => "Continue",
             AnyClient::SessionCreated(_) => "Start Session",
             AnyClient::SessionStarted(_) => "ummmm",
+            AnyClient::ErrorEncountered(_) => "Ok",
         };
         button(button_text).on_press(Message::SubmitPressed).into()
     }

@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 
-use color_eyre::eyre::{bail, Context, Result};
-use greetd_ipc::{Request, Response};
+use greetd_ipc::Request::*;
+use greetd_ipc::Response;
 
+use super::state::ErrorEncountered;
 use super::transport::Transport;
 use super::{AnyClient, Empty, NeedAuthResponse, SessionCreated, SessionStarted};
 
@@ -21,59 +22,61 @@ impl<State: Debug, T: Debug + Transport> Debug for Client<State, T> {
 }
 
 impl<State, T: Transport> Client<State, T> {
-    fn handle_response(self, response: Response) -> Result<AnyClient<T>> {
-        let transport = self.transport;
+    fn transition<NewState>(self, state: NewState) -> Client<NewState, T> {
+        Client { state, transport: self.transport }
+    }
 
+    fn handle_response(
+        self,
+        response: Response,
+        on_success: impl FnOnce(Self) -> AnyClient<T>,
+    ) -> Result<AnyClient<T>, T::Error> {
         let client = match response {
-            Response::Success => Client { state: SessionCreated, transport }.into(),
-
-            Response::AuthMessage { auth_message_type, auth_message } => Client {
-                state: NeedAuthResponse {
-                    auth_message_type: auth_message_type.into(),
-                    auth_message,
-                },
-                transport,
+            Response::Success => on_success(self),
+            Response::AuthMessage { auth_message_type, auth_message } => {
+                self.transition(NeedAuthResponse { auth_message_type, auth_message }).into()
             }
-            .into(),
-
-            Response::Error { description, .. } => {
-                bail!("Error: {}", description)
+            Response::Error { error_type, description } => {
+                self.transition(ErrorEncountered { error_type, description }).into()
             }
         };
-
         Ok(client)
+    }
+
+    pub fn cancel_session(mut self) -> Result<AnyClient<T>, T::Error> {
+        let response = self.transport.send_request(CancelSession)?;
+        self.handle_response(response, |client| client.transition(Empty).into())
     }
 }
 
 impl<T: Transport> Client<Empty, T> {
-    pub fn new() -> Result<Self> {
-        Ok(Self { transport: T::new().wrap_err("test")?, state: Empty })
+    pub fn new() -> Result<Self, T::Error> {
+        Ok(Self { transport: T::new()?, state: Empty })
     }
 
-    pub fn create_session(mut self, username: String) -> Result<AnyClient<T>> {
-        let response = self.transport.send_request(Request::CreateSession { username })?;
-        self.handle_response(response)
+    pub fn create_session(mut self, username: String) -> Result<AnyClient<T>, T::Error> {
+        let response = self.transport.send_request(CreateSession { username })?;
+        self.handle_response(response, |client| client.transition(SessionCreated).into())
     }
 }
 
 impl<T: Transport> Client<NeedAuthResponse, T> {
-    pub fn post_auth_message_response(mut self, response: Option<String>) -> Result<AnyClient<T>> {
-        let response =
-            self.transport.send_request(Request::PostAuthMessageResponse { response })?;
-        self.handle_response(response)
+    pub fn post_auth_message_response(
+        mut self,
+        response: Option<String>,
+    ) -> Result<AnyClient<T>, T::Error> {
+        let response = self.transport.send_request(PostAuthMessageResponse { response })?;
+        self.handle_response(response, |client| client.transition(SessionCreated).into())
     }
 }
 
 impl<T: Transport> Client<SessionCreated, T> {
-    pub fn start_session(mut self, cmd: Vec<String>, env: Vec<String>) -> Result<AnyClient<T>> {
-        let response = self.transport.send_request(Request::StartSession { cmd, env })?;
-        self.handle_response(response)
-    }
-
-    pub fn cancel_session(mut self) -> Result<AnyClient<T>> {
-        let _ = self.transport.send_request(Request::CancelSession)?;
-        Ok(Client { state: Empty, transport: self.transport }.into())
+    pub fn start_session(
+        mut self,
+        cmd: Vec<String>,
+        env: Vec<String>,
+    ) -> Result<AnyClient<T>, T::Error> {
+        let response = self.transport.send_request(StartSession { cmd, env })?;
+        self.handle_response(response, |client| client.transition(SessionStarted).into())
     }
 }
-
-impl<T: Transport> Client<SessionStarted, T> {}

@@ -1,12 +1,12 @@
 { lib, rustPlatform, autoPatchelfHook, gcc-unwrapped, wayland, libGL, libxkbcommon }:
 
-rustPlatform.buildRustPackage rec {
+rustPlatform.buildRustPackage {
   pname = "ocf-greeter";
   version = "2024-10-08";
 
   src = ./.;
 
-  cargoHash = "sha256-KDDhuiJuRUiqF2lIQ3CZVbyXjjfSuQyJh0pxIqbfOg4=";
+  cargoHash = "sha256-lds2aZLhywQXGYLvdQHGNfatIsQPxyD1/XGrHFtb0WI=";
 
   RUSTC_BOOTSTRAP = 1;
 

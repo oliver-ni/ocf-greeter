@@ -3,7 +3,7 @@ pub mod state;
 pub mod transport;
 
 use client::Client;
-use state::{Empty, NeedAuthResponse, SessionCreated, SessionStarted};
+use state::{Empty, ErrorEncountered, NeedAuthResponse, SessionCreated, SessionStarted};
 use transport::Transport;
 
 #[derive(Debug)]
@@ -12,6 +12,7 @@ pub enum AnyClient<T: Transport> {
     NeedAuthResponse(Client<NeedAuthResponse, T>),
     SessionCreated(Client<SessionCreated, T>),
     SessionStarted(Client<SessionStarted, T>),
+    ErrorEncountered(Client<ErrorEncountered, T>),
 }
 
 macro_rules! impl_from {
@@ -28,3 +29,4 @@ impl_from!(Empty);
 impl_from!(NeedAuthResponse);
 impl_from!(SessionCreated);
 impl_from!(SessionStarted);
+impl_from!(ErrorEncountered);

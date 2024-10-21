@@ -5,15 +5,17 @@ mod sessions;
 mod tailwind_colors;
 
 use std::cell::OnceCell;
+use std::fmt::Debug;
 use std::sync::Arc;
 
+use color_eyre::eyre::{bail, OptionExt, Result};
 use greetd::client::Client;
 use greetd::state::AuthMessageType;
 use greetd::transport::{GreetdTransport, MockTransport, Transport};
 use greetd::AnyClient;
 use iced::theme::{Custom, Palette};
 use iced::widget::{
-    button, center, column, container, pick_list, svg, text_input, Column, Text, TextInput,
+    button, center, column, container, pick_list, svg, text, text_input, Column, Text, TextInput,
 };
 use iced::{
     keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription, Task,
@@ -21,22 +23,29 @@ use iced::{
 };
 use sessions::Session;
 
+enum AnsweredQuestion {
+    Visible(String),
+    Secret(String),
+}
+
 struct Greeter<T: Transport> {
-    answered_questions: Vec<String>,
+    prev_answers: Vec<AnsweredQuestion>,
     value: String,
     sessions: OnceCell<Vec<Session>>,
     session: Option<Session>,
-    client: Option<AnyClient<T>>,
+    error_message: Option<String>,
+    client: AnyClient<T>,
 }
 
 impl<T: Transport> Default for Greeter<T> {
     fn default() -> Self {
         Self {
-            answered_questions: Default::default(),
+            prev_answers: Default::default(),
             value: Default::default(),
             sessions: Default::default(),
             session: Default::default(),
-            client: Some(Client::new().unwrap().into()),
+            error_message: Default::default(),
+            client: Client::new().unwrap().into(),
         }
     }
 }
@@ -44,9 +53,9 @@ impl<T: Transport> Default for Greeter<T> {
 #[derive(Debug, Clone)]
 enum Message {
     ValueChanged(String),
+    SessionSelected(Session),
     TabPressed { shift: bool },
     SubmitPressed,
-    SessionSelected(Session),
 }
 
 pub fn main() -> iced::Result {
@@ -56,14 +65,14 @@ pub fn main() -> iced::Result {
     }
 }
 
-pub fn run<T: Transport + 'static>() -> iced::Result {
+pub fn run<T: Transport + Debug + 'static>() -> iced::Result {
     iced::application(Greeter::<T>::title, Greeter::update, Greeter::view)
         .subscription(Greeter::subscription)
         .theme(Greeter::theme)
         .run()
 }
 
-impl<T: Transport> Greeter<T> {
+impl<T: Transport + Debug> Greeter<T> {
     fn title(&self) -> String {
         "Welcome to the Open Computing Facility!".to_owned()
     }
@@ -96,37 +105,62 @@ impl<T: Transport> Greeter<T> {
                 self.value = value;
                 Task::none()
             }
-            Message::TabPressed { shift: false } => widget::focus_next(),
-            Message::TabPressed { shift: true } => widget::focus_previous(),
             Message::SessionSelected(session) => {
                 self.session = Some(session);
                 Task::none()
             }
-            Message::SubmitPressed => self.submit(),
+            Message::TabPressed { shift: false } => widget::focus_next(),
+            Message::TabPressed { shift: true } => widget::focus_previous(),
+            Message::SubmitPressed => match self.submit() {
+                Ok(task) => task,
+                Err(error) => {
+                    self.error_message = Some(error.to_string());
+                    self.prev_answers.clear();
+                    Task::none()
+                }
+            },
         }
     }
 
-    fn submit(&mut self) -> Task<Message> {
-        let client = match std::mem::take(&mut self.client).unwrap() {
-            AnyClient::Empty(client) => client.create_session(self.value.clone()).unwrap(),
-            AnyClient::NeedAuthResponse(client) => {
-                client.post_auth_message_response(Some(self.value.clone())).unwrap()
-            }
-            AnyClient::SessionCreated(client) => {
-                client
-                    .start_session(
-                        self.session.as_ref().unwrap().exec.clone(),
-                        self.session.as_ref().unwrap().to_environment(),
-                    )
-                    .unwrap();
-                return Task::none();
-            }
-            client @ AnyClient::SessionStarted(_) => client,
-        };
-        self.client = Some(client);
+    fn try_replace_client_with_or_abort(
+        client: &mut AnyClient<T>,
+        f: impl FnOnce(AnyClient<T>) -> Result<AnyClient<T>>,
+    ) -> Result<()> {
+        replace_with::replace_with_or_abort_and_return(client, |client| match dbg!(f(client)) {
+            Ok(client) => (Ok(()), client),
+            Err(error) => (Err(error), Client::new().unwrap().into()),
+        })
+    }
 
-        self.answered_questions.push(std::mem::take(&mut self.value));
-        text_input::focus("value")
+    fn submit(&mut self) -> Result<Task<Message>> {
+        Self::try_replace_client_with_or_abort(&mut self.client, |client| match client {
+            AnyClient::Empty(client) => {
+                let value = std::mem::take(&mut self.value);
+                self.prev_answers.push(AnsweredQuestion::Visible(value));
+                client.create_session(self.value.clone())
+            }
+
+            AnyClient::NeedAuthResponse(client) => {
+                use AuthMessageType::*;
+                let value = std::mem::take(&mut self.value);
+                match client.state.auth_message_type {
+                    Secret => self.prev_answers.push(AnsweredQuestion::Secret(value.clone())),
+                    Visible => self.prev_answers.push(AnsweredQuestion::Visible(value.clone())),
+                    _ => {}
+                };
+                client.post_auth_message_response(Some(value))
+            }
+
+            AnyClient::SessionCreated(client) => {
+                let session = self.session.as_ref().ok_or_eyre("No session selected")?;
+                let _ = client.start_session(session.exec.clone(), session.to_environment())?;
+                bail!("Session started")
+            }
+
+            client @ AnyClient::SessionStarted(_) => Ok(client),
+        })?;
+
+        Ok(text_input::focus("value"))
     }
 
     fn logo(&self) -> Element<'_, Message> {
@@ -138,7 +172,7 @@ impl<T: Transport> Greeter<T> {
     }
 
     fn login_form(&self) -> Element<'_, Message> {
-        let (auth_message, auth_message_type) = match self.client.as_ref().unwrap() {
+        let (auth_message, auth_message_type) = match &self.client {
             AnyClient::Empty(_) => ("Username", AuthMessageType::Visible),
             AnyClient::NeedAuthResponse(client) => {
                 (client.state.auth_message.as_str(), client.state.auth_message_type)
@@ -147,17 +181,20 @@ impl<T: Transport> Greeter<T> {
             AnyClient::SessionStarted(_) => return column![].into(),
         };
 
-        let answered_question_inputs =
-            self.answered_questions.iter().map(|value| self.text_input("", value).into());
+        let answered_question_inputs = self.prev_answers.iter().map(|value| match value {
+            AnsweredQuestion::Visible(value) => self.text_input("", &value).into(),
+            AnsweredQuestion::Secret(value) => self.text_input("", &value).secure(true).into(),
+        });
+
+        let next_input = self
+            .text_input(auth_message, &self.value)
+            .id("value")
+            .on_input(Message::ValueChanged)
+            .on_submit(Message::SubmitPressed)
+            .secure(matches!(auth_message_type, AuthMessageType::Secret));
 
         Column::from_iter(answered_question_inputs)
-            .push(
-                self.text_input(auth_message, &self.value)
-                    .id("value")
-                    .on_input(Message::ValueChanged)
-                    .on_submit(Message::SubmitPressed)
-                    .secure(matches!(auth_message_type, AuthMessageType::Secret)),
-            )
+            .push(next_input)
             .spacing(12)
             .align_x(Alignment::Center)
             .into()
@@ -170,7 +207,13 @@ impl<T: Transport> Greeter<T> {
                 .width(Length::Fill)
                 .style(button_style)
         };
-        button("Login").on_press(Message::SubmitPressed).into()
+        let button_text = match self.client {
+            AnyClient::Empty(_) => "Begin",
+            AnyClient::NeedAuthResponse(_) => "Continue",
+            AnyClient::SessionCreated(_) => "Start Session",
+            AnyClient::SessionStarted(_) => "ummmm",
+        };
+        button(button_text).on_press(Message::SubmitPressed).into()
     }
 
     fn session_selector(&self) -> Element<'_, Message> {
@@ -187,9 +230,16 @@ impl<T: Transport> Greeter<T> {
         .into()
     }
 
+    fn error_message(&self) -> Option<Element<'_, Message>> {
+        self.error_message
+            .as_ref()
+            .map(|message| text!("{}", message).color(tailwind_colors::RED_500).center().into())
+    }
+
     fn view(&self) -> Element<'_, Message> {
         center(
             column![self.logo(), self.login_form(), self.submit_button(), self.session_selector()]
+                .push_maybe(self.error_message())
                 .align_x(Alignment::Center)
                 .spacing(24)
                 .max_width(384),

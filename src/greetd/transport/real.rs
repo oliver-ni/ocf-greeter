@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use super::Transport;
 
+#[derive(Debug)]
 pub struct GreetdTransport(UnixStream);
 
 #[derive(Debug, Error)]

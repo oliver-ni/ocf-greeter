@@ -6,6 +6,7 @@ use client::Client;
 use state::{Empty, NeedAuthResponse, SessionCreated, SessionStarted};
 use transport::Transport;
 
+#[derive(Debug)]
 pub enum AnyClient<T: Transport> {
     Empty(Client<Empty, T>),
     NeedAuthResponse(Client<NeedAuthResponse, T>),

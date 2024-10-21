@@ -17,10 +17,17 @@ impl From<greetd_ipc::AuthMessageType> for AuthMessageType {
     }
 }
 
+#[derive(Debug)]
 pub struct Empty;
+
+#[derive(Debug)]
 pub struct NeedAuthResponse {
     pub auth_message_type: AuthMessageType,
     pub auth_message: String,
 }
+
+#[derive(Debug)]
 pub struct SessionCreated;
+
+#[derive(Debug)]
 pub struct SessionStarted;

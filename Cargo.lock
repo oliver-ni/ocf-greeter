@@ -2345,6 +2345,7 @@ dependencies = [
  "greetd_ipc",
  "iced",
  "itertools",
+ "replace_with",
  "rust-ini 0.21.1",
  "shlex",
  "thiserror",
@@ -2803,6 +2804,12 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "replace_with"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3a8614ee435691de62bcffcf4a66d91b3594bf1428a5722e79103249a095690"
 
 [[package]]
 name = "resvg"

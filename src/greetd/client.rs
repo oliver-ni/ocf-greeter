@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use color_eyre::eyre::{bail, Context, Result};
 use greetd_ipc::{Request, Response};
 
@@ -7,6 +9,15 @@ use super::{AnyClient, Empty, NeedAuthResponse, SessionCreated, SessionStarted};
 pub struct Client<State, T: Transport> {
     pub state: State,
     transport: T,
+}
+
+impl<State: Debug, T: Debug + Transport> Debug for Client<State, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("state", &self.state)
+            .field("transport", &self.transport)
+            .finish()
+    }
 }
 
 impl<State, T: Transport> Client<State, T> {

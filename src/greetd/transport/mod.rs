@@ -1,16 +1,31 @@
+mod greetd;
 mod mock;
-mod real;
 
+use color_eyre::eyre::Result;
+pub use greetd::GreetdTransport;
 use greetd_ipc::{Request, Response};
 pub use mock::MockTransport;
-pub use real::GreetdTransport;
 
 pub trait Transport {
-    type Error: Send + Sync + std::error::Error + 'static;
-
-    fn new() -> Result<Self, Self::Error>
+    fn new() -> Result<Self>
     where
         Self: Sized;
 
-    fn send_request(&mut self, request: Request) -> Result<Response, Self::Error>;
+    fn send_request(&mut self, request: Request) -> Result<Response>;
+
+    fn create_session(&mut self, username: String) -> Result<Response> {
+        self.send_request(Request::CreateSession { username })
+    }
+
+    fn post_auth_message_response(&mut self, response: Option<String>) -> Result<Response> {
+        self.send_request(Request::PostAuthMessageResponse { response })
+    }
+
+    fn start_session(&mut self, cmd: Vec<String>, env: Vec<String>) -> Result<Response> {
+        self.send_request(Request::StartSession { cmd, env })
+    }
+
+    fn cancel_session(&mut self) -> Result<Response> {
+        self.send_request(Request::CancelSession)
+    }
 }

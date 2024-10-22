@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
-use std::convert::Infallible;
 
+use color_eyre::eyre::Result;
 use greetd_ipc::{AuthMessageType, Request, Response};
 
 use super::Transport;
@@ -28,13 +28,11 @@ impl MockTransport {
 }
 
 impl Transport for MockTransport {
-    type Error = Infallible;
-
-    fn new() -> Result<Self, Self::Error> {
+    fn new() -> Result<Self> {
         Ok(Default::default())
     }
 
-    fn send_request(&mut self, request: Request) -> Result<Response, Self::Error> {
+    fn send_request(&mut self, request: Request) -> Result<Response> {
         use Request::*;
 
         match request {

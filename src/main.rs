@@ -8,7 +8,7 @@ use std::cell::OnceCell;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use color_eyre::eyre::{OptionExt, Result};
+use color_eyre::eyre::{bail, OptionExt, Result};
 use greetd::session_builder::{self, SessionBuilder};
 use greetd::transport::{GreetdTransport, MockTransport, Transport};
 use greetd_ipc::AuthMessageType;
@@ -136,19 +136,24 @@ impl<T: Transport + Debug> Greeter<T> {
 
             Some(SessionBuilder::NeedAuthResponse(builder)) => {
                 let value = std::mem::take(&mut self.value);
-
                 self.prev_answers.push(match builder.auth_message_type {
                     AuthMessageType::Secret => AnsweredQuestion::Secret(value.clone()),
                     AuthMessageType::Visible => AnsweredQuestion::Visible(value.clone()),
                     _ => todo!(),
                 });
-
                 self.session_builder = Some(builder.post_auth_message_response(Some(value))?);
             }
 
             Some(SessionBuilder::SessionCreated(builder)) => {
-                let session = self.session.as_ref().ok_or_eyre("No session selected")?;
+                let session = match self.session.as_ref() {
+                    Some(session) => session,
+                    None => {
+                        self.session_builder = Some(SessionBuilder::SessionCreated(builder));
+                        bail!("No session selected");
+                    }
+                };
                 builder.start_session(session.exec.clone(), session.to_environment())?;
+                return Ok(iced::exit());
             }
         };
 

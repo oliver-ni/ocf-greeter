@@ -1,14 +1,10 @@
-{ lib, rustPlatform, autoPatchelfHook, gcc-unwrapped, wayland, libGL, libxkbcommon }:
+{ lib, craneLib, autoPatchelfHook, gcc-unwrapped, wayland, libGL, libxkbcommon }:
 
-rustPlatform.buildRustPackage {
+craneLib.buildPackage {
   pname = "ocf-greeter";
-  version = "2024-10-08";
+  version = "2024-10-22";
 
-  src = ./.;
-
-  cargoHash = "sha256-UkKSukPbKrXXrypSV5bdJiDU25qtocAbymIM3NaOIZw=";
-
-  RUSTC_BOOTSTRAP = 1;
+  src = craneLib.cleanCargoSource ./.;
 
   nativeBuildInputs = [ autoPatchelfHook ];
   buildInputs = [ gcc-unwrapped ];

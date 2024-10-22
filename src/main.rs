@@ -153,6 +153,13 @@ impl<T: Transport + Debug> Greeter<T> {
                     }
                 };
                 builder.start_session(session.exec.clone(), session.to_environment())?;
+
+                #[cfg(target_os = "linux")]
+                // Iced currently has a bug where exiting normally on Wayland
+                // causes a segfault. WTF? So we immediately exit for now.
+                // https://github.com/iced-rs/iced/issues/2625
+                std::process::exit(0);
+
                 return Ok(iced::exit());
             }
         };

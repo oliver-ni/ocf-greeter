@@ -4,7 +4,7 @@ craneLib.buildPackage {
   pname = "ocf-greeter";
   version = "2024-10-22";
 
-  src = craneLib.cleanCargoSource ./.;
+  src = ./.;
 
   nativeBuildInputs = [ autoPatchelfHook ];
   buildInputs = [ gcc-unwrapped ];

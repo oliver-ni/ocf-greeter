@@ -13,7 +13,8 @@ use greetd_ipc::AuthMessageType;
 use iced::theme::{Custom, Palette};
 use iced::widget::svg::Handle;
 use iced::widget::{
-    button, center, column, container, pick_list, svg, text, text_input, Column, Text, TextInput,
+    button, center, column, container, pick_list, stack, svg, text, text_input, Column, Text,
+    TextInput,
 };
 use iced::{
     keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription, Task,
@@ -197,8 +198,7 @@ impl<T: Transport + Debug> Greeter<T> {
             None => ("Username", &AuthMessageType::Visible),
             Some(SessionBuilder::NeedAuthResponse(builder)) => {
                 // Remove colon at the end of the description, if it exists
-                let description = builder.auth_message.as_str();
-                let description = description.strip_suffix(":").unwrap_or(description);
+                let description = builder.auth_message.as_str().trim().trim_end_matches(":");
                 (description, &builder.auth_message_type)
             }
             Some(SessionBuilder::SessionCreated(_)) => return column![].into(),
@@ -250,13 +250,19 @@ impl<T: Transport + Debug> Greeter<T> {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        center(
-            column![self.logo(), self.login_form(), self.submit_button(), self.session_selector()]
-                .push_maybe(self.error_message())
-                .align_x(Alignment::Center)
-                .spacing(24)
-                .max_width(384),
-        )
+        stack![
+            center(
+                column![self.logo(), self.login_form(), self.submit_button()]
+                    .push_maybe(self.error_message())
+                    .align_x(Alignment::Center)
+                    .spacing(24)
+                    .max_width(384),
+            ),
+            container(self.session_selector())
+                .padding(10)
+                .align_right(Length::Fill)
+                .align_bottom(Length::Fill),
+        ]
         .into()
     }
 }

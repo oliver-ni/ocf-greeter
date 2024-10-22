@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.5.20", features = ["derive"] }
 color-eyre = "0.6.3"
 enum_dispatch = "0.3.13"
 greetd_ipc = { version = "0.10.3", features = ["sync-codec"] }

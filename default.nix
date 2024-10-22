@@ -6,7 +6,7 @@ rustPlatform.buildRustPackage {
 
   src = ./.;
 
-  cargoHash = "sha256-KDDhuiJuRUiqF2lIQ3CZVbyXjjfSuQyJh0pxIqbfOg4=";
+  cargoHash = "sha256-UkKSukPbKrXXrypSV5bdJiDU25qtocAbymIM3NaOIZw=";
 
   RUSTC_BOOTSTRAP = 1;
 

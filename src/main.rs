@@ -1,14 +1,12 @@
-#![feature(once_cell_get_mut)]
-
 mod greetd;
 mod sessions;
 mod tailwind_colors;
 
-use std::cell::OnceCell;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use color_eyre::eyre::{bail, OptionExt, Result};
+use clap::Parser;
+use color_eyre::eyre::{bail, Result};
 use greetd::session_builder::{self, SessionBuilder};
 use greetd::transport::{GreetdTransport, MockTransport, Transport};
 use greetd_ipc::AuthMessageType;
@@ -23,6 +21,14 @@ use iced::{
 };
 use sessions::Session;
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Default session name
+    #[arg(long)]
+    default_session: Option<String>,
+}
+
 enum AnsweredQuestion {
     Visible(String),
     Secret(String),
@@ -31,7 +37,7 @@ enum AnsweredQuestion {
 struct Greeter<T: Transport> {
     prev_answers: Vec<AnsweredQuestion>,
     value: String,
-    sessions: OnceCell<Vec<Session>>,
+    sessions: Vec<Session>,
     session: Option<Session>,
     error_message: Option<String>,
     session_builder: Option<SessionBuilder<T>>,
@@ -42,7 +48,7 @@ impl<T: Transport> Default for Greeter<T> {
         Self {
             prev_answers: Default::default(),
             value: Default::default(),
-            sessions: Default::default(),
+            sessions: sessions::get_sessions(),
             session: Default::default(),
             error_message: Default::default(),
             session_builder: Default::default(),
@@ -59,17 +65,26 @@ enum Message {
 }
 
 pub fn main() -> iced::Result {
+    let args = Args::parse();
+
     match std::env::var("OCF_GREETER_MOCK").ok() {
-        Some(_) => run::<MockTransport>(),
-        None => run::<GreetdTransport>(),
+        Some(_) => run::<MockTransport>(args),
+        None => run::<GreetdTransport>(args),
     }
 }
 
-pub fn run<T: Transport + Debug + 'static>() -> iced::Result {
-    iced::application(Greeter::<T>::title, Greeter::update, Greeter::view)
+fn run<T: Transport + Debug + 'static>(args: Args) -> iced::Result {
+    let mut state = Greeter::<T>::default();
+
+    match args.default_session {
+        Some(slug) => state.session = state.sessions.iter().find(|s| s.slug == slug).cloned(),
+        None => {}
+    };
+
+    iced::application(Greeter::title, Greeter::update, Greeter::view)
         .subscription(Greeter::subscription)
         .theme(Greeter::theme)
-        .run()
+        .run_with(|| (state, Task::none()))
 }
 
 impl<T: Transport + Debug> Greeter<T> {
@@ -127,11 +142,12 @@ impl<T: Transport + Debug> Greeter<T> {
     }
 
     fn submit(&mut self) -> Result<Task<Message>> {
-        match std::mem::take(&mut self.session_builder) {
+        Ok(match std::mem::take(&mut self.session_builder) {
             None => {
                 let value = std::mem::take(&mut self.value);
                 self.prev_answers.push(AnsweredQuestion::Visible(value.clone()));
                 self.session_builder = Some(session_builder::create_session(value)?);
+                text_input::focus("value")
             }
 
             Some(SessionBuilder::NeedAuthResponse(builder)) => {
@@ -142,6 +158,9 @@ impl<T: Transport + Debug> Greeter<T> {
                     _ => todo!(),
                 });
                 self.session_builder = Some(builder.post_auth_message_response(Some(value))?);
+
+                // Automatically try to start the session
+                Task::done(Message::SubmitPressed)
             }
 
             Some(SessionBuilder::SessionCreated(builder)) => {
@@ -160,11 +179,9 @@ impl<T: Transport + Debug> Greeter<T> {
                 // https://github.com/iced-rs/iced/issues/2625
                 std::process::exit(0);
 
-                return Ok(iced::exit());
+                iced::exit()
             }
-        };
-
-        Ok(text_input::focus("value"))
+        })
     }
 
     fn logo(&self) -> Element<'_, Message> {
@@ -179,7 +196,10 @@ impl<T: Transport + Debug> Greeter<T> {
         let (auth_message, auth_message_type) = match &self.session_builder {
             None => ("Username", &AuthMessageType::Visible),
             Some(SessionBuilder::NeedAuthResponse(builder)) => {
-                (builder.auth_message.as_str(), &builder.auth_message_type)
+                // Remove colon at the end of the description, if it exists
+                let description = builder.auth_message.as_str();
+                let description = description.strip_suffix(":").unwrap_or(description);
+                (description, &builder.auth_message_type)
             }
             Some(SessionBuilder::SessionCreated(_)) => return column![].into(),
         };
@@ -215,12 +235,8 @@ impl<T: Transport + Debug> Greeter<T> {
 
     fn session_selector(&self) -> Element<'_, Message> {
         container(
-            pick_list(
-                self.sessions.get_or_init(sessions::get_sessions).as_slice(),
-                self.session.clone(),
-                Message::SessionSelected,
-            )
-            .placeholder("choose a session"),
+            pick_list(self.sessions.as_slice(), self.session.clone(), Message::SessionSelected)
+                .placeholder("choose a session"),
         )
         .width(Length::Fill)
         .align_x(Alignment::End)

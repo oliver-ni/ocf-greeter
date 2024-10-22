@@ -7,13 +7,16 @@ use itertools::Itertools;
 
 static DEFAULT_XDG_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 
-static SESSION_SUBDIRS: [(&str, SessionType); 2] = [
-    ("xsessions", SessionType::X11),
+static SESSION_SUBDIRS: &[(&str, SessionType)] = &[
+    // FIXME: X sessions don't launch correctly
+    // Need to launch X server before launching the session
+    // ("xsessions", SessionType::X11),
     ("wayland-sessions", SessionType::Wayland),
 ];
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SessionType {
+    #[allow(dead_code)]
     X11,
     Wayland,
 }
@@ -58,14 +61,11 @@ pub fn get_sessions() -> Vec<Session> {
 
     let session_dirs = xdg_data_dirs.split(":").flat_map(|dir| {
         let dir = PathBuf::from(dir);
-        SESSION_SUBDIRS.map(|(subdir, r#type)| (dir.join(subdir), r#type))
+        SESSION_SUBDIRS.iter().map(move |(subdir, r#type)| (dir.join(subdir), *r#type))
     });
 
     let desktop_files = session_dirs.flat_map(|(dir, r#type)| match std::fs::read_dir(dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .map(|entry| (entry.path(), r#type))
-            .collect(),
+        Ok(entries) => entries.filter_map(Result::ok).map(|entry| (entry.path(), r#type)).collect(),
         Err(_) => Vec::new(),
     });
 
@@ -83,12 +83,8 @@ pub fn read_desktop_file(path: PathBuf, r#type: SessionType) -> Result<Session> 
         .section(Some("Desktop Entry"))
         .ok_or_eyre("missing [Desktop Entry] section in .desktop file")?;
 
-    let name = section
-        .get("Name")
-        .ok_or_eyre("missing Name= property in .desktop file")?;
-    let exec = section
-        .get("Exec")
-        .ok_or_eyre("missing Exec= property in .desktop file")?;
+    let name = section.get("Name").ok_or_eyre("missing Name= property in .desktop file")?;
+    let exec = section.get("Exec").ok_or_eyre("missing Exec= property in .desktop file")?;
     let desktop_names = section.get("DesktopNames").unwrap_or("");
 
     Ok(Session {

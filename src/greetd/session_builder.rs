@@ -9,7 +9,6 @@
 use std::fmt::Debug;
 
 use color_eyre::eyre::{bail, Result};
-use greetd_ipc::Request::*;
 use greetd_ipc::Response;
 
 use super::transport::Transport;
@@ -37,7 +36,10 @@ pub enum SessionBuilder<T: Transport> {
 /// successfully, or there is an auth message to respond to.
 ///
 /// This logic is factored into this function.
-fn handle_auth_message_response<T>(transport: T, response: Response) -> Result<SessionBuilder<T>>
+fn handle_auth_message_response<T>(
+    mut transport: T,
+    response: Response,
+) -> Result<SessionBuilder<T>>
 where
     T: Transport,
 {
@@ -50,7 +52,10 @@ where
                 transport,
             })
         }
-        Response::Error { error_type, description } => bail!("{:?}: {}", error_type, description),
+        Response::Error { error_type, description } => {
+            transport.cancel_session()?;
+            bail!("{:?}: {}", error_type, description)
+        }
     })
 }
 
@@ -75,21 +80,8 @@ impl<T: Transport> NeedAuthResponseBuilder<T> {
         mut self,
         response: Option<String>,
     ) -> Result<SessionBuilder<T>> {
-        let response = self.transport.send_request(PostAuthMessageResponse { response })?;
+        let response = self.transport.post_auth_message_response(response)?;
         handle_auth_message_response(self.transport, response)
-    }
-
-    /// Cancels the session currently under configuration.
-    pub fn cancel_session(mut self) -> Result<()> {
-        let response = self.transport.cancel_session()?;
-
-        match response {
-            Response::Success => Ok(()),
-            Response::AuthMessage { .. } => bail!("unexpected auth_message after cancel_session"),
-            Response::Error { error_type, description } => {
-                bail!("{:?}: {}", error_type, description)
-            }
-        }
     }
 }
 
@@ -97,11 +89,12 @@ impl<T: Transport> SessionCreatedBuilder<T> {
     /// Starts the session with the given command and environment. If the request is
     /// successful, the session will be started when the greeter process exits.
     pub fn start_session(mut self, cmd: Vec<String>, env: Vec<String>) -> Result<()> {
-        let response = self.transport.send_request(StartSession { cmd, env })?;
+        let response = self.transport.start_session(cmd, env)?;
 
         match response {
             Response::Success => Ok(()),
             Response::Error { error_type, description } => {
+                self.transport.cancel_session()?;
                 bail!("{:?}: {}", error_type, description)
             }
             Response::AuthMessage { .. } => bail!("unexpected auth_message after start_session"),

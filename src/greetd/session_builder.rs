@@ -9,26 +9,34 @@
 use std::fmt::Debug;
 
 use color_eyre::eyre::{bail, Result};
-use greetd_ipc::Response;
+use greetd_ipc::{AuthMessageType, Response};
 
 use super::transport::Transport;
 
 #[derive(Debug)]
-pub struct NeedAuthResponseBuilder<T: Transport> {
+pub enum AnsweredQuestion {
+    Visible(String),
+    Secret(String),
+}
+
+#[derive(Debug)]
+pub struct NeedAuthResponse<T: Transport> {
     pub auth_message_type: greetd_ipc::AuthMessageType,
     pub auth_message: String,
+    pub prev_answers: Vec<AnsweredQuestion>,
     transport: T,
 }
 
 #[derive(Debug)]
-pub struct SessionCreatedBuilder<T: Transport> {
+pub struct SessionCreated<T: Transport> {
+    pub prev_answers: Vec<AnsweredQuestion>,
     transport: T,
 }
 
 #[derive(Debug)]
 pub enum SessionBuilder<T: Transport> {
-    NeedAuthResponse(NeedAuthResponseBuilder<T>),
-    SessionCreated(SessionCreatedBuilder<T>),
+    NeedAuthResponse(NeedAuthResponse<T>),
+    SessionCreated(SessionCreated<T>),
 }
 
 /// [`create_session`] and [`post_auth_message_response`] handle the responses
@@ -38,18 +46,22 @@ pub enum SessionBuilder<T: Transport> {
 /// This logic is factored into this function.
 fn handle_auth_message_response<T>(
     mut transport: T,
+    prev_answers: Vec<AnsweredQuestion>,
     response: Response,
 ) -> Result<SessionBuilder<T>>
 where
     T: Transport,
 {
     Ok(match response {
-        Response::Success => SessionBuilder::SessionCreated(SessionCreatedBuilder { transport }),
+        Response::Success => {
+            SessionBuilder::SessionCreated(SessionCreated { transport, prev_answers })
+        }
         Response::AuthMessage { auth_message_type, auth_message } => {
-            SessionBuilder::NeedAuthResponse(NeedAuthResponseBuilder {
+            SessionBuilder::NeedAuthResponse(NeedAuthResponse {
                 auth_message_type,
                 auth_message,
                 transport,
+                prev_answers,
             })
         }
         Response::Error { error_type, description } => {
@@ -66,11 +78,11 @@ where
 /// - There is an auth message to be answered.
 pub fn create_session<T: Transport>(username: String) -> Result<SessionBuilder<T>> {
     let mut transport = T::new()?;
-    let response = transport.create_session(username)?;
-    handle_auth_message_response(transport, response)
+    let response = transport.create_session(username.clone())?;
+    handle_auth_message_response(transport, vec![AnsweredQuestion::Visible(username)], response)
 }
 
-impl<T: Transport> NeedAuthResponseBuilder<T> {
+impl<T: Transport> NeedAuthResponse<T> {
     /// Posts a response to an auth message received from greetd.
     ///
     /// When successful, this function returns an [`Either`] type for the two cases:
@@ -80,12 +92,20 @@ impl<T: Transport> NeedAuthResponseBuilder<T> {
         mut self,
         response: Option<String>,
     ) -> Result<SessionBuilder<T>> {
+        if let Some(response) = response.as_ref() {
+            use AnsweredQuestion::*;
+            match self.auth_message_type {
+                AuthMessageType::Secret => self.prev_answers.push(Secret(response.clone())),
+                AuthMessageType::Visible => self.prev_answers.push(Visible(response.clone())),
+                _ => {}
+            };
+        };
         let response = self.transport.post_auth_message_response(response)?;
-        handle_auth_message_response(self.transport, response)
+        handle_auth_message_response(self.transport, self.prev_answers, response)
     }
 }
 
-impl<T: Transport> SessionCreatedBuilder<T> {
+impl<T: Transport> SessionCreated<T> {
     /// Starts the session with the given command and environment. If the request is
     /// successful, the session will be started when the greeter process exits.
     pub fn start_session(mut self, cmd: Vec<String>, env: Vec<String>) -> Result<()> {

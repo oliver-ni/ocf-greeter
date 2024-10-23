@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use clap::Parser;
 use color_eyre::eyre::{bail, Result};
-use greetd::session_builder::{self, SessionBuilder};
+use greetd::session_builder::{
+    self, AnsweredQuestion, NeedAuthResponse, SessionBuilder, SessionCreated,
+};
 use greetd::transport::{GreetdTransport, MockTransport, Transport};
 use greetd_ipc::AuthMessageType;
 use iced::theme::{Custom, Palette};
@@ -30,13 +32,7 @@ struct Args {
     default_session: Option<String>,
 }
 
-enum AnsweredQuestion {
-    Visible(String),
-    Secret(String),
-}
-
 struct Greeter<T: Transport> {
-    prev_answers: Vec<AnsweredQuestion>,
     value: String,
     sessions: Vec<Session>,
     session: Option<Session>,
@@ -47,7 +43,6 @@ struct Greeter<T: Transport> {
 impl<T: Transport> Default for Greeter<T> {
     fn default() -> Self {
         Self {
-            prev_answers: Default::default(),
             value: Default::default(),
             sessions: sessions::get_sessions(),
             session: Default::default(),
@@ -135,7 +130,6 @@ impl<T: Transport + Debug> Greeter<T> {
                 }
                 Err(error) => {
                     self.error_message = Some(error.to_string());
-                    self.prev_answers.clear();
                     Task::none()
                 }
             },
@@ -146,22 +140,19 @@ impl<T: Transport + Debug> Greeter<T> {
         Ok(match std::mem::take(&mut self.session_builder) {
             None => {
                 let value = std::mem::take(&mut self.value);
-                self.prev_answers.push(AnsweredQuestion::Visible(value.clone()));
                 self.session_builder = Some(session_builder::create_session(value)?);
                 text_input::focus("value")
             }
 
             Some(SessionBuilder::NeedAuthResponse(builder)) => {
                 let value = std::mem::take(&mut self.value);
-                self.prev_answers.push(match builder.auth_message_type {
-                    AuthMessageType::Secret => AnsweredQuestion::Secret(value.clone()),
-                    AuthMessageType::Visible => AnsweredQuestion::Visible(value.clone()),
-                    _ => todo!(),
-                });
                 self.session_builder = Some(builder.post_auth_message_response(Some(value))?);
 
                 // Automatically try to start the session
-                Task::done(Message::SubmitPressed)
+                match self.session_builder {
+                    Some(SessionBuilder::SessionCreated(_)) => Task::done(Message::SubmitPressed),
+                    _ => text_input::focus("value"),
+                }
             }
 
             Some(SessionBuilder::SessionCreated(builder)) => {
@@ -194,30 +185,70 @@ impl<T: Transport + Debug> Greeter<T> {
     }
 
     fn login_form(&self) -> Element<'_, Message> {
-        let (auth_message, auth_message_type) = match &self.session_builder {
-            None => ("Username", &AuthMessageType::Visible),
-            Some(SessionBuilder::NeedAuthResponse(builder)) => {
-                // Remove colon at the end of the description, if it exists
-                let description = builder.auth_message.as_str().trim().trim_end_matches(":");
-                (description, &builder.auth_message_type)
-            }
-            Some(SessionBuilder::SessionCreated(_)) => return column![].into(),
+        let answered_question_inputs = {
+            // Previously answered text inputs
+
+            let prev_answers = match &self.session_builder {
+                None => &[][..],
+                Some(
+                    SessionBuilder::NeedAuthResponse(NeedAuthResponse { prev_answers, .. })
+                    | SessionBuilder::SessionCreated(SessionCreated { prev_answers, .. }),
+                ) => &prev_answers[..],
+            };
+
+            prev_answers.iter().map(|value| match value {
+                AnsweredQuestion::Visible(value) => self.text_input("", &value).into(),
+                AnsweredQuestion::Secret(value) => self.text_input("", &value).secure(true).into(),
+            })
         };
 
-        let answered_question_inputs = self.prev_answers.iter().map(|value| match value {
-            AnsweredQuestion::Visible(value) => self.text_input("", &value).into(),
-            AnsweredQuestion::Secret(value) => self.text_input("", &value).secure(true).into(),
-        });
+        let next_input = {
+            // The currently active text input.
 
-        let next_input = self
-            .text_input(auth_message, &self.value)
-            .id("value")
-            .on_input(Message::ValueChanged)
-            .on_submit(Message::SubmitPressed)
-            .secure(matches!(auth_message_type, AuthMessageType::Secret));
+            let description_and_secure = match &self.session_builder {
+                None => Some(("Username", false)),
+                Some(SessionBuilder::NeedAuthResponse(NeedAuthResponse {
+                    auth_message_type: AuthMessageType::Visible,
+                    auth_message,
+                    ..
+                })) => Some((auth_message.as_str(), false)),
+                Some(SessionBuilder::NeedAuthResponse(NeedAuthResponse {
+                    auth_message_type: AuthMessageType::Secret,
+                    auth_message,
+                    ..
+                })) => Some((auth_message.as_str(), true)),
+                _ => None,
+            };
+
+            description_and_secure.map(|(description, secure)| {
+                self.text_input(
+                    // Remove colon at the end of the description, if it exists
+                    description.trim().trim_end_matches(":"),
+                    &self.value,
+                )
+                .id("value")
+                .on_submit(Message::SubmitPressed)
+                .on_input(Message::ValueChanged)
+                .secure(secure)
+            })
+        };
+
+        let info_message = {
+            let message = match &self.session_builder {
+                Some(SessionBuilder::NeedAuthResponse(NeedAuthResponse {
+                    auth_message_type: AuthMessageType::Info | AuthMessageType::Error,
+                    auth_message,
+                    ..
+                })) => Some(auth_message),
+                _ => None,
+            };
+
+            message.map(|message| text!("{}", message))
+        };
 
         Column::from_iter(answered_question_inputs)
-            .push(next_input)
+            .push_maybe(next_input)
+            .push_maybe(info_message)
             .spacing(12)
             .align_x(Alignment::Center)
             .into()
@@ -235,7 +266,7 @@ impl<T: Transport + Debug> Greeter<T> {
 
     fn session_selector(&self) -> Element<'_, Message> {
         container(
-            pick_list(self.sessions.as_slice(), self.session.clone(), Message::SessionSelected)
+            pick_list(&self.sessions[..], self.session.clone(), Message::SessionSelected)
                 .placeholder("choose a session"),
         )
         .width(Length::Fill)

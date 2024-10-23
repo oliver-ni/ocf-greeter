@@ -7,22 +7,17 @@ use super::Transport;
 
 static OTP_USERNAME: &str = "otp";
 static NOPASS_USERNAME: &str = "nopass";
-static PASSWORD: &str = "waddles";
-static OTP: &str = "123456";
 
 #[derive(Debug, Default)]
 pub struct MockTransport {
-    questions: VecDeque<(&'static str, &'static str)>,
+    auth_messages: VecDeque<Response>,
 }
 
 impl MockTransport {
     fn next(&mut self) -> Response {
-        match self.questions.pop_front() {
+        match self.auth_messages.pop_front() {
             None => Response::Success,
-            Some((question, _)) => Response::AuthMessage {
-                auth_message_type: AuthMessageType::Secret,
-                auth_message: question.to_owned(),
-            },
+            Some(r) => r,
         }
     }
 }
@@ -37,13 +32,23 @@ impl Transport for MockTransport {
 
         match request {
             CreateSession { username } => {
-                self.questions.clear();
+                self.auth_messages.clear();
                 if !username.contains(NOPASS_USERNAME) {
-                    self.questions.push_back(("Password:", PASSWORD));
+                    self.auth_messages.push_back(Response::AuthMessage {
+                        auth_message: "Password: ".to_owned(),
+                        auth_message_type: AuthMessageType::Secret,
+                    });
                 }
                 if username.contains(OTP_USERNAME) {
-                    self.questions.push_back(("OTP:", OTP));
+                    self.auth_messages.push_back(Response::AuthMessage {
+                        auth_message: "OTP: ".to_owned(),
+                        auth_message_type: AuthMessageType::Visible,
+                    });
                 }
+                self.auth_messages.push_back(Response::AuthMessage {
+                    auth_message: "This is a test info message!".to_owned(),
+                    auth_message_type: AuthMessageType::Info,
+                });
                 Ok(self.next())
             }
 
@@ -51,7 +56,7 @@ impl Transport for MockTransport {
             PostAuthMessageResponse { response: Some(_) } => Ok(self.next()),
 
             StartSession { cmd: _, env: _ } => {
-                if self.questions.is_empty() {
+                if self.auth_messages.is_empty() {
                     Ok(Response::Success)
                 } else {
                     todo!("mock start session out of order")

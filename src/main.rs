@@ -15,12 +15,12 @@ use greetd_ipc::AuthMessageType;
 use iced::theme::{Custom, Palette};
 use iced::widget::svg::Handle;
 use iced::widget::{
-    button, center, column, container, pick_list, stack, svg, text, text_input, Column, Text,
+    button, center, column, container, pick_list, row, stack, svg, text, text_input, Column, Text,
     TextInput,
 };
 use iced::{
-    keyboard, widget, Alignment, Background, Border, Color, Element, Length, Subscription, Task,
-    Theme,
+    keyboard, time, widget, Alignment, Background, Border, Color, Element, Length, Subscription,
+    Task, Theme,
 };
 use sessions::Session;
 
@@ -33,6 +33,7 @@ struct Args {
 }
 
 struct Greeter<T: Transport> {
+    now: chrono::DateTime<chrono::Local>,
     value: String,
     sessions: Vec<Session>,
     session: Option<Session>,
@@ -43,6 +44,7 @@ struct Greeter<T: Transport> {
 impl<T: Transport> Default for Greeter<T> {
     fn default() -> Self {
         Self {
+            now: chrono::offset::Local::now(),
             value: Default::default(),
             sessions: sessions::get_sessions(),
             session: Default::default(),
@@ -54,6 +56,7 @@ impl<T: Transport> Default for Greeter<T> {
 
 #[derive(Debug, Clone)]
 enum Message {
+    Tick(chrono::DateTime<chrono::Local>),
     ValueChanged(String),
     SessionSelected(Session),
     TabPressed { shift: bool },
@@ -104,14 +107,22 @@ impl<T: Transport + Debug> Greeter<T> {
         use keyboard::key::Named::Tab;
         use keyboard::Key;
 
-        keyboard::on_key_press(|key, modifiers| match key {
-            Key::Named(Tab) => Some(Message::TabPressed { shift: modifiers.shift() }),
-            _ => None,
-        })
+        Subscription::batch([
+            keyboard::on_key_press(|key, modifiers| match key {
+                Key::Named(Tab) => Some(Message::TabPressed { shift: modifiers.shift() }),
+                _ => None,
+            }),
+            time::every(time::Duration::from_millis(500))
+                .map(|_| Message::Tick(chrono::offset::Local::now())),
+        ])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Tick(now) => {
+                self.now = now;
+                Task::none()
+            }
             Message::ValueChanged(value) => {
                 self.value = value;
                 Task::none()
@@ -280,6 +291,14 @@ impl<T: Transport + Debug> Greeter<T> {
             .map(|message| text!("{}", message).color(tailwind_colors::RED_500).center().into())
     }
 
+    fn clock(&self) -> Element<'_, Message> {
+        text!("{}", self.now.format("%-I:%M:%S %p"))
+            .size(20)
+            .center()
+            .color(tailwind_colors::GRAY_500)
+            .into()
+    }
+
     fn view(&self) -> Element<'_, Message> {
         stack![
             center(
@@ -289,9 +308,9 @@ impl<T: Transport + Debug> Greeter<T> {
                     .spacing(24)
                     .max_width(384),
             ),
-            container(self.session_selector())
+            container(row![self.clock(), self.session_selector()].align_y(Alignment::End))
                 .padding(10)
-                .align_right(Length::Fill)
+                .align_left(Length::Fill)
                 .align_bottom(Length::Fill),
         ]
         .into()

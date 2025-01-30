@@ -80,10 +80,13 @@ fn run<T: Transport + Debug + 'static>(args: Args) -> iced::Result {
         None => {}
     };
 
+    // Focus the initial text input
+    let task = text_input::focus("value");
+
     iced::application(Greeter::title, Greeter::update, Greeter::view)
         .subscription(Greeter::subscription)
         .theme(Greeter::theme)
-        .run_with(|| (state, Task::none()))
+        .run_with(|| (state, task))
 }
 
 impl<T: Transport + Debug> Greeter<T> {

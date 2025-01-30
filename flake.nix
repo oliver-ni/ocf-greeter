@@ -26,5 +26,18 @@
       packages = forAllSystems (pkgs: {
         default = pkgs.ocf-greeter;
       });
+
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          packages = [
+            pkgs.git
+            pkgs.dioxus-cli
+            pkgs.tailwindcss
+            pkgs.libiconv
+            pkgs.darwin.apple_sdk.frameworks.AppKit
+            pkgs.darwin.apple_sdk.frameworks.WebKit
+          ];
+        };
+      });
     };
 }

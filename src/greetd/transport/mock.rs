@@ -55,8 +55,9 @@ impl Transport for MockTransport {
             PostAuthMessageResponse { response: None } => todo!("mock response none"),
             PostAuthMessageResponse { response: Some(_) } => Ok(self.next()),
 
-            StartSession { cmd: _, env: _ } => {
+            StartSession { cmd, env } => {
                 if self.auth_messages.is_empty() {
+                    println!("Session started. cmd: {:?}, env: {:?}", cmd, env);
                     Ok(Response::Success)
                 } else {
                     todo!("mock start session out of order")

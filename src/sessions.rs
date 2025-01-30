@@ -55,6 +55,25 @@ impl Session {
     }
 }
 
+pub fn get_sessions_mock() -> Vec<Session> {
+    vec![
+        Session {
+            slug: "test-wayland".to_owned(),
+            name: "Test (Wayland)".to_owned(),
+            exec: vec![],
+            r#type: SessionType::Wayland,
+            desktop_names: vec![],
+        },
+        Session {
+            slug: "test-xorg".to_owned(),
+            name: "Test (Xorg)".to_owned(),
+            exec: vec![],
+            r#type: SessionType::X11,
+            desktop_names: vec![],
+        },
+    ]
+}
+
 pub fn get_sessions() -> Vec<Session> {
     let xdg_data_dirs =
         std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| DEFAULT_XDG_DATA_DIRS.to_owned());

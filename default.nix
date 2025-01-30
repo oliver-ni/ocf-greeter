@@ -1,4 +1,4 @@
-{ lib, craneLib, autoPatchelfHook, gcc-unwrapped, wayland, libGL, libxkbcommon }:
+{ lib, craneLib, autoPatchelfHook, pkg-config, glib, pango, cairo, gdk-pixbuf, gtk3, libsoup_3, webkitgtk_4_1, xdotool, wayland, libGL, libxkbcommon }:
 
 craneLib.buildPackage {
   pname = "ocf-greeter";
@@ -6,9 +6,9 @@ craneLib.buildPackage {
 
   src = ./.;
 
-  nativeBuildInputs = [ autoPatchelfHook ];
-  buildInputs = [ gcc-unwrapped ];
-  runtimeDependencies = map lib.getLib [ gcc-unwrapped wayland libGL libxkbcommon ];
+  nativeBuildInputs = [ autoPatchelfHook pkg-config ];
+  buildInputs = [ glib pango cairo gdk-pixbuf gtk3 libsoup_3 webkitgtk_4_1 xdotool ];
+  runtimeDependencies = map lib.getLib [ wayland libGL libxkbcommon ];
 
   meta = with lib; {
     description = "Custom greetd greeter for the Open Computing Facility";

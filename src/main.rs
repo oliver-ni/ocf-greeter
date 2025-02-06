@@ -4,6 +4,7 @@ mod sessions;
 
 use color_eyre::eyre::{bail, Result};
 use components::{Button, Input, SessionSelector};
+use dioxus::desktop::{Config, WindowBuilder};
 use dioxus::prelude::*;
 use greetd::session_builder::{
     self, AnsweredQuestion, NeedAuthResponse, SessionBuilder, SessionCreated,
@@ -17,9 +18,17 @@ const BACKGROUND: Asset = asset!("/assets/login.png");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
+    let config = dioxus::LaunchBuilder::new().with_cfg(
+        Config::default().with_menu(None).with_window(
+            WindowBuilder::new()
+                .with_maximized(true)
+                .with_title("Welcome to the Open Computing Facility!"),
+        ),
+    );
+
     match std::env::var("OCF_GREETER_MOCK").ok() {
-        Some(_) => dioxus::launch(App::<MockTransport>),
-        None => dioxus::launch(App::<GreetdTransport>),
+        Some(_) => config.launch(App::<MockTransport>),
+        None => config.launch(App::<GreetdTransport>),
     }
 }
 

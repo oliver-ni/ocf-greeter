@@ -1,9 +1,12 @@
+mod args;
 mod components;
 mod greetd;
 mod sessions;
 
+use std::path::Path;
 use std::rc::Rc;
 
+use args::get_args;
 use color_eyre::eyre::{bail, Result};
 use components::{Button, Input, SessionSelector};
 use dioxus::desktop::{Config, WindowBuilder};
@@ -15,27 +18,32 @@ use greetd::transport::{GreetdTransport, MockTransport, Transport};
 use greetd_ipc::AuthMessageType;
 use sessions::Session;
 
-const LOGO: Asset = asset!("/assets/logo.svg");
-const BACKGROUND: Asset = asset!("/assets/login.png");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
+    let demo = get_args().demo;
+
     let config = dioxus::LaunchBuilder::new().with_cfg(
-        Config::default()
-            .with_menu(None)
-            .with_window(WindowBuilder::new().with_maximized(true).with_decorations(false)),
+        Config::default().with_menu(None).with_window(
+            WindowBuilder::new()
+                .with_maximized(true)
+                .with_title("Welcome to the Open Computing Facility!")
+                .with_decorations(demo),
+        ),
     );
 
-    match std::env::var("OCF_GREETER_MOCK").ok() {
-        Some(_) => config.launch(App::<MockTransport>),
-        None => config.launch(App::<GreetdTransport>),
+    if demo {
+        config.launch(App::<MockTransport>)
+    } else {
+        config.launch(App::<GreetdTransport>)
     }
 }
 
 fn get_sessions() -> Vec<Session> {
-    match std::env::var("OCF_GREETER_MOCK").ok() {
-        Some(_) => sessions::get_sessions_mock(),
-        None => sessions::get_sessions(),
+    if get_args().demo {
+        sessions::get_sessions_mock()
+    } else {
+        sessions::get_sessions()
     }
 }
 
@@ -50,8 +58,9 @@ impl<T: Transport> Default for State<T> {
     fn default() -> Self {
         let sessions = get_sessions();
 
-        let session = std::env::var("DEFAULT_SESSION")
-            .ok()
+        let session = get_args()
+            .default_session
+            .as_deref()
             .and_then(|slug| sessions.iter().find(|session| session.slug == slug).cloned());
 
         Self { session_builder: Default::default(), value: Default::default(), sessions, session }
@@ -229,11 +238,18 @@ struct FormWrapperProps {
 
 #[component]
 pub fn FormWrapper(props: FormWrapperProps) -> Element {
+    fn maybe_css_url(path: Option<&Path>) -> Option<String> {
+        path.and_then(Path::to_str).map(|bg| format!("url({})", bg))
+    }
+
     rsx! {
         div {
             class: "h-full bg-center bg-cover flex flex-col items-center justify-center gap-4",
-            background_image: format!("url({})", BACKGROUND),
-            img { src: LOGO, class: "w-20" }
+            background_image: maybe_css_url(get_args().background.as_deref()),
+            img {
+                src: maybe_css_url(get_args().logo.as_deref()),
+                class: "w-20"
+            }
             form {
                 onsubmit: props.onsubmit,
                 class: "p-4 w-96 flex flex-col gap-4 rounded-lg",

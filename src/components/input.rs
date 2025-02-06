@@ -10,6 +10,7 @@ pub struct InputProps {
     placeholder: String,
     #[props(into)]
     value: String,
+    onmounted: EventHandler<MountedEvent>,
     oninput: EventHandler<FormEvent>,
 }
 
@@ -24,6 +25,7 @@ pub fn Input(props: InputProps) -> Element {
                 disabled: props.disabled,
                 placeholder: props.placeholder,
                 value: props.value,
+                onmounted: props.onmounted,
                 oninput: props.oninput
             }
         }

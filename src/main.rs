@@ -2,6 +2,8 @@ mod components;
 mod greetd;
 mod sessions;
 
+use std::rc::Rc;
+
 use color_eyre::eyre::{bail, Result};
 use components::{Button, Input, SessionSelector};
 use dioxus::desktop::{Config, WindowBuilder};
@@ -93,6 +95,7 @@ impl<T: Transport> State<T> {
 #[component]
 fn App<T: Transport + 'static>() -> Element {
     let mut state = use_signal(|| State::<T>::default());
+    let mut input_element: Signal<Option<Rc<MountedData>>> = use_signal(|| None);
     let mut error_message = use_signal(|| None);
 
     let oninput_value = move |event: FormEvent| state.write().value = event.value();
@@ -105,6 +108,12 @@ fn App<T: Transport + 'static>() -> Element {
             Err(error) => error_message.set(Some(error.to_string())),
         };
     };
+
+    use_effect(move || {
+        if let Some(header) = input_element() {
+            let _ = header.set_focus(true);
+        }
+    });
 
     let answered_question_inputs: Vec<_> = {
         // Previously answered text inputs
@@ -131,6 +140,7 @@ fn App<T: Transport + 'static>() -> Element {
                     value: value,
                     secure: secure,
                     disabled: true,
+                    onmounted: |_| {},
                     oninput: |_| {}
                 })
             })
@@ -161,6 +171,7 @@ fn App<T: Transport + 'static>() -> Element {
                     placeholder: description.trim().trim_end_matches(":"),
                     value: &state.read().value,
                     secure: secure,
+                    onmounted: move |elem: MountedEvent| input_element.set(Some(elem.data())),
                     oninput: oninput_value
                 }
             }

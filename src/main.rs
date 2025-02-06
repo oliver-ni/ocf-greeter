@@ -19,11 +19,9 @@ const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 fn main() {
     let config = dioxus::LaunchBuilder::new().with_cfg(
-        Config::default().with_menu(None).with_window(
-            WindowBuilder::new()
-                .with_maximized(true)
-                .with_title("Welcome to the Open Computing Facility!"),
-        ),
+        Config::default()
+            .with_menu(None)
+            .with_window(WindowBuilder::new().with_maximized(true).with_decorations(false)),
     );
 
     match std::env::var("OCF_GREETER_MOCK").ok() {

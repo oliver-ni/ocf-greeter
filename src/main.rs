@@ -246,9 +246,8 @@ pub fn FormWrapper(props: FormWrapperProps) -> Element {
         div {
             class: "h-full bg-center bg-cover flex flex-col items-center justify-center gap-4",
             background_image: maybe_css_url(get_args().background.as_deref()),
-            img {
-                src: maybe_css_url(get_args().logo.as_deref()),
-                class: "w-20"
+            if let Some(src) = maybe_css_url(get_args().logo.as_deref()) {
+                img { src: src, class: "w-20" }
             }
             form {
                 onsubmit: props.onsubmit,
